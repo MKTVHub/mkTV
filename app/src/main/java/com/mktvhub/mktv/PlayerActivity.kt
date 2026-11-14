@@ -1,0 +1,104 @@
+package com.mktvhub.mktv
+
+import android.app.Activity
+import android.os.Bundle
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.TextView
+import androidx.annotation.OptIn
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
+
+/** Full-screen native player for HLS / DASH streams found on a page. */
+@OptIn(UnstableApi::class)
+class PlayerActivity : Activity() {
+    private var player: ExoPlayer? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
+
+        val url = intent.getStringExtra(EXTRA_URL) ?: return finish()
+        val headers = buildMap {
+            intent.getStringExtra(EXTRA_REFERER)?.let { put("Referer", it) }
+            intent.getStringExtra(EXTRA_ORIGIN)?.let { put("Origin", it) }
+            intent.getStringExtra(EXTRA_COOKIE)?.let { put("Cookie", it) }
+        }
+        val http = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setDefaultRequestProperties(headers)
+            .apply { intent.getStringExtra(EXTRA_USER_AGENT)?.let { setUserAgent(it) } }
+
+        val exo = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(http))
+            .build()
+        player = exo
+
+        val root = FrameLayout(this).apply { keepScreenOn = true; setBackgroundColor(android.graphics.Color.BLACK) }
+        val view = PlayerView(this).apply {
+            this.player = exo
+            useController = true
+            controllerShowTimeoutMs = 3000
+            setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+        }
+        val error = TextView(this).apply {
+            setTextColor(android.graphics.Color.WHITE)
+            textSize = 20f
+            gravity = Gravity.CENTER
+        }
+        root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(error, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        setContentView(root)
+        view.requestFocus()
+
+        exo.addListener(object : Player.Listener {
+            override fun onPlayerError(e: PlaybackException) {
+                error.text = "Can't play this stream\n${e.errorCodeName}\n\nPress Back to return to the page"
+            }
+        })
+        val mime = when {
+            url.contains(".mpd", ignoreCase = true) -> MimeTypes.APPLICATION_MPD
+            else -> MimeTypes.APPLICATION_M3U8
+        }
+        exo.setMediaItem(MediaItem.Builder().setUri(url).setMimeType(mime).build())
+        exo.playWhenReady = true
+        exo.prepare()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        player?.pause()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        player?.play()
+    }
+
+    override fun onDestroy() {
+        player?.release()
+        player = null
+        super.onDestroy()
+    }
+
+    companion object {
+        const val EXTRA_URL = "url"
+        const val EXTRA_REFERER = "referer"
+        const val EXTRA_ORIGIN = "origin"
+        const val EXTRA_USER_AGENT = "ua"
+        const val EXTRA_COOKIE = "cookie"
+        const val EXTRA_TITLE = "title"
+    }
+}

@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.MkTv" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:colorAccent">#FF4F46E5</item>
+    </style>
+</resources>

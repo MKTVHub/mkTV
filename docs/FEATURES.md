@@ -1,0 +1,180 @@
+# Features
+
+Each feature: what it does, how it works, where it lives in the code, and its known limits. File references point to functions and region markers in `app/src/main/java/com/mktvhub/mktv/` and `app/src/main/assets/`.
+
+---
+
+## Jump navigation (default)
+
+**What.** The D-pad moves a highlight ring from one link or button to the next, like a TV app. OK clicks; holding OK long-presses. ▲ at the top of a page goes to the toolbar. Holding ▼ or ▲ jumps straight to the site's fixed bottom or top bar (for example a bottom tab bar). A one-time hint per site tells you when such a bar exists.
+
+**How.** `page_script.js` collects candidates: standard interactive elements and ARIA roles, plus a bounded scan (1,200 elements near the viewport) for elements with `cursor: pointer`, keeping only the outermost one. Candidates are cached and rebuilt when the DOM changes (`MutationObserver`) or you scroll into a new screen. Each move scores candidates in the pressed direction, preferring the same row or column. Elements inside `position: fixed/sticky` layers are "pinned" and only used for vertical moves once page content runs out, so headers and bottom bars do not trap the highlight. The chosen element is scrolled into the middle band of the screen. The page returns its rectangle; the app draws the ring natively and clicks with a synthesized touch at its centre.
+
+**Where.** `page_script.js` (jump-mode IIFE, `window.__sp.move/rect/bars`), `BrowserActivity.jump`, `showRingFor`, `pollRing`, `maybeHintBars`, `tapAt`, `CursorView.showRing`.
+
+**Limits.** Elements inside cross-origin iframes cannot be reached individually (the iframe itself is a target). Canvas-only UIs have nothing to jump to; use pointer mode. Very dynamic pages may need a second press while the cache rebuilds.
+
+## Pointer mode
+
+**What.** The D-pad moves a mouse pointer that speeds up while held. Push against a screen edge to scroll. OK clicks at the pointer. The pointer fades after 6 seconds of inactivity. Moving it to the top edge shows the toolbar.
+
+**How.** `CursorView` runs a `Choreographer` frame loop while a direction is held, ramping speed from 260 to 1,300 dp/s over 0.9 s. At an edge it calls `onEdgeScroll`, which sends a mouse wheel event at the pointer.
+
+**Where.** `CursorView.kt`, `BrowserActivity.scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation or Settings → Navigation (`Prefs.navMode`).
+
+**Limits.** Slower than jump mode for long pages. Hover-only menus get a touch, not a hover.
+
+## Auto-hiding top bar
+
+**What.** The toolbar (back, forward, reload, home, address, Watch full screen, shield, ⋮) slides away while you use a page. It comes back on page load, when you press ▲ at the top of the page, when the pointer reaches the top edge, or when any overlay is open.
+
+**Where.** `// ---- Auto-hiding top bar ----` (`showBar`, `scheduleHideBar`, `hideBar`, `canHideBar`). Setting: Settings → Browsing → Auto-hide the top bar.
+
+**Limits.** It stays visible while a page is loading.
+
+## ⋮ menu
+
+**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Desktop site (On / Off), Phone remote, Clear browsing data…, Settings. Phone remote (see below).
+
+**Where.** `buildMenu`, `showClearMenu`, `clearData`.
+
+**Clear browsing data (menu).** Checkboxes for History (back/forward and Recently visited, on by default), Cookies & site data (off by default) and Cached images & files (on by default).
+
+**Limits.** Saved site icons in `filesDir/icons` are not removed by either clear action.
+
+## Home screen
+
+**What.** The start screen (and the ⌂ button) shows three rows:
+- **Popular:** YouTube (opens `youtube.com/tv`, the TV interface), YouTube Music, TikTok, Twitch, Dailymotion.
+- **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. Edit removes them.
+- **Recently visited:** up to 10 shown (12 stored), one per site, newest first, excluding favourites. Not shown in private mode.
+
+Settings → Start screen can replace it with a fixed home page address.
+
+**How.** Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none.
+
+**Where.** `// region Shortcuts`, `BrowserActivity.POPULAR`, `Prefs.shortcuts`, `Prefs.recent`.
+
+**Limits.** The icon fetch contacts every site on the home screen once, including Popular sites you have never opened (not in private mode). See [PRIVACY.md](PRIVACY.md).
+
+## YouTube TV interface
+
+**What.** The YouTube tile opens `youtube.com/tv`, YouTube's own remote-friendly interface. mkTV sends a Smart-TV user agent so YouTube serves it, and passes the remote straight to the page: arrows, OK and media keys act exactly as on a TV app. Back acts as YouTube's back; **hold Back** to return to the mkTV home screen. The cursor and ring are hidden there.
+
+**Where.** `isTvSite`, `uaFor`, `TV_UA`, `handleSiteRemote`, `siteRemote`.
+
+**Limits.** Depends on YouTube continuing to serve the TV interface to that user agent.
+
+## Watch mode
+
+**What.** Turns on by itself when a large video (over a quarter of the screen) is playing. The remote then controls the video:
+- Vertical feeds (portrait video, for example short-video feeds): ▲ previous, ▼ next.
+- Normal video: ▼ real full screen, ▲ leave full screen or leave watch mode.
+- ◀ ▶ seek 10 s, OK pause/play, Back browse the page again.
+- A key-hint dock slides up for 2.5 s after each press, and a large symbol flashes for feedback.
+
+Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or not. After Back, watch mode does not re-enter on the same URL.
+
+**How.** `checkWatch` asks `__sp.media()` about every second for the largest visible `<video>`. "Next" scrolls the video's scroll container by one screen (snap-scrolling feeds land on exactly one item), falling back to synthetic arrow-key events. Full screen calls the Fullscreen API on the player container, after sending a harmless key to the page to provide the user activation the API needs. Watch mode exits after about 3 s with no big video.
+
+**Where.** `// ---- Watch mode ----` (`checkWatch`, `enterWatch`, `exitWatch`, `handleWatchKey`, `handleMediaKey`, `toggleTheater`, `showDock`, `flash`), `page_script.js` (`mainVideo`, `feed`, `fullscreen`).
+
+**Limits.** Videos inside cross-origin iframes (most embedded players) are invisible to the script, so watch mode and media keys don't reach them. Use the player's own controls or "Watch full screen" if a stream was detected.
+
+## Auto-unmute
+
+**What.** Many sites start video muted. When a large video starts playing muted, mkTV clicks the site's own unmute button if it finds one, then unmutes the element. Small hover previews and videos inside an ad container stay muted.
+
+**Where.** `page_script.js` (auto-unmute IIFE). Setting: Settings → Browsing → Auto-unmute videos (full effect after an app restart).
+
+## Stream detection and native player
+
+**What.** When a page requests an HLS (`.m3u8`) or DASH (`.mpd`) manifest, a **Watch full screen** button appears in the toolbar (with a count if there are several; you pick from a list). It opens the stream in a native ExoPlayer, which is usually smoother on TV hardware than the in-page player.
+
+**How.** `shouldInterceptRequest` records manifest URLs with the Referer and Origin the page sent, skipping variant playlists under an already-seen master. The player receives those headers plus the WebView user agent and the cookies for that URL.
+
+**Where.** `HostRules.isStreamUrl`, `isVariantOf`, `DetectedStream`, `updateStreamButton`, `openStreamPicker`, `playNative`, `PlayerActivity.kt`.
+
+**Limits.** DRM-protected streams will not play. Streams that need tokens generated by page scripts per segment may fail. Detection is by URL extension only; manifests without `.m3u8`/`.mpd` in the URL are missed.
+
+## Ad and tracker blocking
+
+**What.** On by default. The shield in the toolbar shows a badge with the number blocked on this page; OK opens a panel with counts for ads and trackers, pop-ups and redirects, the all-time total, and an ON/OFF switch to pause blocking on this site.
+
+**How.**
+- **Network:** subresource requests to blocked hosts (and their subdomains) get an empty response. The list is `assets/adhosts.txt` (a small, conservative list) plus a downloaded hosts file, by default the StevenBlack unified hosts list, refreshed at app start if the copy is over a day old. Settings → Blocklist shows the count, has "Update now", and lets you change or clear the URL.
+- **Cosmetic:** `page_script.js` hides common ad containers with CSS.
+- **Click traps:** `page_script.js` removes invisible full-screen layers that turn any click into a pop-up (fixed/absolute, z-index ≥ 100, over half the viewport, nearly transparent, no media and no text). It sweeps for 10 s after load.
+- **Pop-ups:** pop-ups without a click are dropped. Pop-ups from a click are opened only if they stay on the same site and the host is not blocked.
+- **Redirects:** script-driven jumps to another site without a click are blocked; server redirects are allowed unless blocklisted. Links to apps (`intent:`, `market:` and similar) are always blocked.
+- **Snackbar:** each blocked pop-up or redirect shows a small message with **Open anyway**, which lets that URL through once.
+
+**Where.** `AdBlocker.kt`, `HostRules.isBlocked/parseHosts/sameSite`, `shouldInterceptRequest`, `shouldOverrideUrlLoading`, `onCreateWindow`, `// region Toolbar` (`updateShield`, `bindShieldPanel`, `toggleSitePause`, `showBlocked`), `Prefs.pausedSites`, `Prefs.totalBlocked`.
+
+**Limits.**
+- Ads served from the site's own domain are not blocked by the host list.
+- Pausing a site, or turning "Block ads & trackers" off, stops network, pop-up and redirect blocking only. The cosmetic CSS and click-trap sweep in `page_script.js` always run, and YouTube ad pruning keeps running on a paused YouTube.
+- Pop-ups without a click are dropped even when protection is off.
+- "Sneaky redirect" detection can block a legitimate cross-site sign-in that is started by script; use Open anyway or pause the site.
+
+## YouTube ad pruning
+
+**What.** Removes ads on YouTube's web, mobile and TV interfaces.
+
+**How.** Same approach as uBlock Origin and Brave scriptlets: `yt_clean.js` wraps `JSON.parse`, `Response.prototype.json` (for `/youtubei/v1/` responses) and the `ytInitialPlayerResponse` / `ytInitialData` globals to delete ad keys (`adPlacements`, `playerAds`, `adSlots`, ...) and ad renderers from lists before YouTube reads them. It hides ad slots with CSS, and every 300 ms mutes and skips anything that still plays as an ad.
+
+**Where.** `assets/yt_clean.js`; injected in `createWebView` when "Block ads & trackers" is on.
+
+**Limits.** YouTube changes often; this needs maintenance. On WebViews without document-start injection it runs later and is less effective.
+
+## Private browsing
+
+**What.** ⋮ → Private browsing (or the button on the home screen, or Settings → Privacy). The toolbar turns purple. No history, recents, cookies or site data are kept; everything is deleted when you close private browsing or the app. Blocking stays on, third-party cookies are refused, and release builds hide private pages from Recents and screenshots.
+
+**Where.** `// ---- Private browsing ----`, `createWebView(isPrivate = true)`. Details and limits: [PRIVACY.md](PRIVACY.md).
+
+## Tracking-parameter stripping
+
+**What.** Removes `utm_*`, `fbclid`, `gclid`, `msclkid` and similar click IDs from addresses you type and from page navigations, plus `si` and `feature` on YouTube links.
+
+**Where.** `HostRules.stripTracking`, `normalizeInput`, `shouldOverrideUrlLoading`. Setting: Settings → Privacy.
+
+**Limits.** Applies to main-frame navigations only, not to requests a page makes in the background.
+
+## Global Privacy Control
+
+**What.** Pages see `navigator.globalPrivacyControl === true`, which asks sites not to sell or share your data where the law honours it.
+
+**Where.** `page_script.js` (first IIFE). Applies in normal and private mode.
+
+**Limits.** Only the JavaScript property is set. The `Sec-GPC: 1` request header is not sent, so server-side checks will not see it.
+
+## Settings
+
+Sections and what they control (`renderSettings`):
+
+| Section | Settings |
+|---|---|
+| Navigation | Jump between items / Mouse pointer |
+| Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`) |
+| Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
+| Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
+| Blocklist | Host count and last update, Update now, Extra blocklist URL (default StevenBlack, build-time `DEFAULT_BLOCKLIST_URL`) |
+| Browsing | Auto-hide the top bar, Auto-unmute videos, Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
+
+Settings save as you change them. Closing Settings reloads the page if anything that needs a reload changed.
+
+## Other behaviour
+
+- **Address bar:** text without a scheme becomes `https://…` if it looks like a host, otherwise a Google search.
+- **Desktop site:** switches the user agent to desktop Chrome on Windows.
+- **Open a URL from another app or adb:** an intent with a data URI loads it.
+- **Exit:** Back on the first page asks "Press Back again to exit".
+
+## Phone remote (in progress)
+
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad, OK, Back, Home, Menu, play/pause, seek ±10 s, previous/next, a text box that types into the focused field, and "open URL". No app install on the phone.
+
+**Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `state`). Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
+
+**Limits.** Plain HTTP on the local network. In the current build the server keeps running until the app is closed, and the token stays the same for that app run.

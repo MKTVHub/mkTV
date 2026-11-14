@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#15121d">
+<title>mkTV Remote</title>
+<style>
+  :root { --bg:#15121d; --card:#221d2e; --key:#2d2640; --key2:#3a3152; --text:#f4f2f8; --muted:#a39db3;
+          --accent1:#7c3aed; --accent2:#db2777; --accent3:#f97316; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,system-ui,Roboto,sans-serif; }
+  body { padding:16px 18px calc(24px + env(safe-area-inset-bottom)); max-width:460px; margin:0 auto; user-select:none; -webkit-user-select:none; }
+  header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  .logo { width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--accent1),var(--accent2),var(--accent3));
+          display:grid; place-items:center; font-weight:800; font-size:13px; letter-spacing:.5px; }
+  h1 { font-size:18px; margin:0; }
+  #now { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; text-align:right; }
+  .dot { width:9px; height:9px; border-radius:50%; background:#10b981; flex:none; }
+  .dot.off { background:#ef4444; }
+
+  .pad { position:relative; width:min(78vw,300px); aspect-ratio:1; margin:8px auto 18px; border-radius:50%;
+         background:radial-gradient(circle at 50% 40%, var(--key2), var(--key)); box-shadow:0 10px 30px #0008, inset 0 1px 0 #ffffff14; }
+  .pad button { position:absolute; background:none; border:0; color:var(--text); font-size:26px; display:grid; place-items:center; }
+  .pad .up    { top:0; left:30%; width:40%; height:30%; }
+  .pad .down  { bottom:0; left:30%; width:40%; height:30%; }
+  .pad .left  { left:0; top:30%; width:30%; height:40%; }
+  .pad .right { right:0; top:30%; width:30%; height:40%; }
+  .pad .ok    { left:31%; top:31%; width:38%; height:38%; border-radius:50%;
+                background:linear-gradient(135deg,var(--accent1),var(--accent2)); font-size:18px; font-weight:800; box-shadow:0 4px 18px #db277766; }
+  .pad button:active, .row button:active { transform:scale(.94); filter:brightness(1.25); }
+
+  .row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:10px; }
+  .row.media { grid-template-columns:repeat(5,1fr); }
+  .row button { height:54px; border-radius:14px; border:0; background:var(--key); color:var(--text); font-size:15px; font-weight:600; }
+  .row.media button { font-size:19px; }
+
+  .card { background:var(--card); border-radius:16px; padding:12px; margin-top:12px; }
+  .card label { color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; display:block; margin:2px 2px 8px; }
+  .field { display:flex; gap:8px; }
+  .field input { flex:1; min-width:0; height:46px; border-radius:12px; border:1px solid #ffffff1a; background:#120f19; color:var(--text);
+                 padding:0 12px; font-size:16px; user-select:text; -webkit-user-select:text; }
+  .field button { height:46px; padding:0 16px; border-radius:12px; border:0; color:white; font-weight:700; font-size:15px;
+                  background:linear-gradient(135deg,var(--accent1),var(--accent2)); }
+  .hint { color:var(--muted); font-size:12px; text-align:center; margin-top:16px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">MK</div>
+  <h1>mkTV Remote</h1>
+  <span id="now"></span>
+  <span class="dot" id="dot"></span>
+</header>
+
+<div class="pad">
+  <button class="up" data-key="up" aria-label="Up">▲</button>
+  <button class="left" data-key="left" aria-label="Left">◀</button>
+  <button class="ok" data-key="ok" aria-label="OK">OK</button>
+  <button class="right" data-key="right" aria-label="Right">▶</button>
+  <button class="down" data-key="down" aria-label="Down">▼</button>
+</div>
+
+<div class="row">
+  <button data-key="back">↩ Back</button>
+  <button data-key="home">⌂ Home</button>
+  <button data-key="menu">⋮ Menu</button>
+</div>
+<div class="row media">
+  <button data-key="prev" aria-label="Previous">⏮</button>
+  <button data-key="rew" aria-label="Back 10 seconds">⏪</button>
+  <button data-key="playpause" aria-label="Play or pause">⏯</button>
+  <button data-key="ff" aria-label="Forward 10 seconds">⏩</button>
+  <button data-key="next" aria-label="Next">⏭</button>
+</div>
+
+<div class="card">
+  <label for="text">Type on TV</label>
+  <div class="field">
+    <input id="text" placeholder="Search or type into the selected box" autocomplete="off" enterkeyhint="send">
+    <button id="send">Send</button>
+  </div>
+</div>
+<div class="card">
+  <label for="url">Open a website</label>
+  <div class="field">
+    <input id="url" type="url" placeholder="youtube.com" autocomplete="off" autocapitalize="off" enterkeyhint="go">
+    <button id="open">Open</button>
+  </div>
+</div>
+<p class="hint">Hold an arrow to keep moving. Phone and TV must be on the same Wi-Fi.</p>
+
+<script>
+  var token = new URLSearchParams(location.search).get('t') || '';
+  function api(path, body) {
+    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Token': token }, body: JSON.stringify(body || {}) })
+      .then(function (r) { setOnline(r.ok); return r; })
+      .catch(function () { setOnline(false); });
+  }
+  function setOnline(ok) { document.getElementById('dot').className = ok ? 'dot' : 'dot off'; }
+  function buzz() { if (navigator.vibrate) navigator.vibrate(8); }
+
+  // Arrows support holding (down/up events) so "hold ▼" shortcuts and fast scrolling work; other keys are a press.
+  var HOLDABLE = { up: 1, down: 1, left: 1, right: 1, ok: 1, back: 1 };
+  document.querySelectorAll('[data-key]').forEach(function (b) {
+    var key = b.getAttribute('data-key'), held = false;
+    if (HOLDABLE[key]) {
+      b.addEventListener('pointerdown', function (e) { e.preventDefault(); held = true; buzz(); api('/api/key', { key: key, action: 'down' }); });
+      var release = function () { if (!held) return; held = false; api('/api/key', { key: key, action: 'up' }); };
+      b.addEventListener('pointerup', release); b.addEventListener('pointerleave', release); b.addEventListener('pointercancel', release);
+    } else {
+      b.addEventListener('click', function () { buzz(); api('/api/key', { key: key, action: 'press' }); });
+    }
+  });
+
+  function sendText(enter) {
+    var el = document.getElementById('text');
+    if (!el.value) { if (enter) api('/api/key', { key: 'ok', action: 'press' }); return; }
+    api('/api/text', { text: el.value, enter: !!enter }); el.value = '';
+  }
+  document.getElementById('send').onclick = function () { sendText(true); };
+  document.getElementById('text').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendText(true); } });
+
+  function openUrl() {
+    var el = document.getElementById('url');
+    if (!el.value) return;
+    api('/api/open', { url: el.value }); el.value = ''; el.blur();
+  }
+  document.getElementById('open').onclick = openUrl;
+  document.getElementById('url').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); openUrl(); } });
+
+  function poll() {
+    fetch('/api/state', { headers: { 'X-Token': token } })
+      .then(function (r) { setOnline(r.ok); return r.json(); })
+      .then(function (s) { document.getElementById('now').textContent = s.title || ''; })
+      .catch(function () { setOnline(false); });
+  }
+  poll(); setInterval(poll, 4000);
+</script>
+</body>
+</html>
