@@ -41,7 +41,7 @@ Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Install
 
-**From a release:** download `mkTV-<version>.apk` from [github.com/MKTVHub/mkTV/releases/latest](https://github.com/MKTVHub/mkTV/releases/latest) and install it with `adb install mkTV-<version>.apk` or a side-loading app (for example Downloader or Send Files to TV). Release APKs are signed by MKTVHub; the certificate SHA-256 is `16:45:35:90:AA:A7:BD:7E:86:EC:B1:BD:E8:CC:8E:B9:AE:66:F3:30:CB:7C:BE:DC:72:3D:5F:3A:E5:BE:B7:FD`.
+**From a release:** download [`mkTV.apk`](https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk) from the [latest release](https://github.com/MKTVHub/mkTV/releases/latest) and install it with `adb install mkTV.apk` or a side-loading app (for example Downloader or Send Files to TV). Release APKs are signed by MKTVHub; the certificate SHA-256 is `16:45:35:90:AA:A7:BD:7E:86:EC:B1:BD:E8:CC:8E:B9:AE:66:F3:30:CB:7C:BE:DC:72:3D:5F:3A:E5:BE:B7:FD`.
 
 **From source** (JDK 17, Android SDK 35):
 
@@ -58,14 +58,16 @@ Build-time defaults in `app/build.gradle.kts`: `DEFAULT_HOME_URL` (home page add
 
 ## Screenshots
 
-*Coming soon.* Planned: home screen, jump navigation ring, watch mode dock, shield panel, settings, private browsing.
+| | |
+|---|---|
+| ![Home screen](docs/screenshots/home.jpg) **Home screen**: Popular, Favourites and Recent tiles | ![Jump navigation](docs/screenshots/jump-navigation.jpg) **Jump navigation**: the highlight jumps between links and buttons |
+| ![Watch mode](docs/screenshots/watch-mode.jpg) **Watch mode**: remote key hints over a playing video | ![Ad blocker](docs/screenshots/ad-blocker.jpg) **Ad blocker**: what was blocked on this site |
+| ![Phone remote pairing](docs/screenshots/phone-remote-qr.jpg) **Phone remote**: scan to pair | ![Private browsing](docs/screenshots/private-browsing.jpg) **Private browsing** |
+| ![Menu](docs/screenshots/menu.jpg) **⋮ menu** | ![Settings](docs/screenshots/settings.jpg) **Settings** |
 
-<!--
-![Home screen](docs/images/home.png)
-![Jump navigation](docs/images/jump.png)
-![Watch mode](docs/images/watch.png)
-![Shield panel](docs/images/shield.png)
--->
+<p align="center"><img src="docs/screenshots/phone-remote-page.jpg" width="260" alt="Phone remote page"><br><b>The phone remote</b>, in any phone browser</p>
+
+<sub>Example content: Wikipedia (CC BY-SA), Merriam-Webster, "Big Buck Bunny" © Blender Foundation (CC BY 3.0). Site names and logos belong to their owners.</sub>
 
 ## Documentation
 

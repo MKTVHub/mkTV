@@ -32,7 +32,7 @@ Include the TV model, Android version, Android System WebView version (Settings 
 1. Bump `versionCode` and `versionName` in `app/build.gradle.kts`.
 2. Build a signed APK: `./gradlew test assembleRelease`. Signing reads `~/.mktvhub/keystore.properties` (or the file named by `MKTV_KEYSTORE_PROPS`) with `storeFile`, `storePassword`, `keyAlias`, `keyPassword`. The keystore never goes in the repo. Without it, the release APK is unsigned.
 3. Check it: `apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk`. The SHA-256 must match the one in the README, or existing users cannot update.
-4. Tag `vX.Y.Z` and attach the APK as `mkTV-X.Y.Z.apk` to a GitHub release, with its SHA-256 in the notes.
+4. Tag `vX.Y.Z` and attach the APK twice: as `mkTV-X.Y.Z.apk` and as `mkTV.apk` (the website links to `releases/latest/download/mkTV.apk`). Put its SHA-256 in the notes.
 
 ## Security issues
 

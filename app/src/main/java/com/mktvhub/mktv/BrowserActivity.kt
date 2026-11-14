@@ -325,7 +325,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 return true
             }
 
-            override fun onReceivedIcon(view: WebView, icon: Bitmap) { if (view === webView && !inPrivate) saveFavicon(icon) }
+            override fun onReceivedIcon(view: WebView, icon: Bitmap) {
+                // YouTube's TV interface reports the YouTube TV app icon; keep the normal YouTube icon for the tile.
+                if (view === webView && !inPrivate && !isTvSite(view.url)) saveFavicon(icon)
+            }
 
             // Hide the grey "play" placeholder WebView shows before a video starts.
             override fun getDefaultVideoPoster(): Bitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888)
@@ -824,9 +827,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         kotlin.concurrent.thread(name = "icons") {
             var any = false
             hosts.forEach { host ->
-                for (path in listOf("/apple-touch-icon.png", "/favicon.ico")) {
+                for (path in iconCandidates(host) + listOf("/apple-touch-icon.png", "/favicon.ico")) {
                     val bmp = runCatching {
-                        val c = java.net.URL("https://$host$path").openConnection() as java.net.HttpURLConnection
+                        val target = if (path.startsWith("http")) path else "https://$host$path"
+                        val c = java.net.URL(target).openConnection() as java.net.HttpURLConnection
                         c.connectTimeout = 5000; c.readTimeout = 8000
                         c.setRequestProperty("User-Agent", ua)
                         try { if (c.responseCode in 200..299) c.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) } else null } finally { c.disconnect() }
@@ -841,6 +845,33 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             if (any) runOnUiThread { if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts() }
         }
     }
+
+    /** Icons a site lists in its home page's <link rel="icon"/"apple-touch-icon">, largest first. Network thread only. */
+    private fun iconCandidates(host: String): List<String> = runCatching {
+        val c = java.net.URL("https://$host/").openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 5000; c.readTimeout = 8000
+        c.setRequestProperty("User-Agent", DESKTOP_UA) // desktop pages list the full icon set
+        val html = try {
+            if (c.responseCode !in 200..299) return@runCatching emptyList<String>()
+            c.inputStream.use { input ->
+                val buf = java.io.ByteArrayOutputStream(); val chunk = ByteArray(16 * 1024)
+                while (buf.size() < 300_000) { val n = input.read(chunk); if (n < 0) break; buf.write(chunk, 0, n) }
+                buf.toString("UTF-8")
+            }
+        } finally { c.disconnect() }
+        val linkRe = Regex("<link\\b[^>]*>", RegexOption.IGNORE_CASE)
+        val attr = { tag: String, name: String -> Regex("\\b$name\\s*=\\s*[\"']([^\"']*)[\"']", RegexOption.IGNORE_CASE).find(tag)?.groupValues?.get(1) }
+        linkRe.findAll(html).map { it.value }
+            .filter { tag -> attr(tag, "rel")?.lowercase()?.let { "icon" in it } == true }
+            .mapNotNull { tag ->
+                val href = attr(tag, "href") ?: return@mapNotNull null
+                val size = attr(tag, "sizes")?.substringBefore('x')?.toIntOrNull()
+                    ?: if (attr(tag, "rel")!!.contains("apple", true)) 180 else 32
+                java.net.URL(java.net.URL("https://$host/"), href.replace("&amp;", "&")).toString() to size
+            }
+            .filter { it.first.startsWith("https://") && !it.first.endsWith(".svg") }
+            .sortedByDescending { it.second }.map { it.first }.distinct().take(3).toList()
+    }.getOrDefault(emptyList())
 
     /** Saved favicon if we have one, otherwise a coloured letter avatar. */
     private fun siteAvatar(url: String, title: String): View {
@@ -870,9 +901,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
+    /** One icon per host (minus "www."), so youtube.com and music.youtube.com keep their own icons. */
     private fun faviconFile(host: String?): java.io.File? {
-        val site = HostRules.siteOf(host) ?: return null
-        return java.io.File(java.io.File(filesDir, "icons").apply { mkdirs() }, "$site.png")
+        val key = host?.lowercase()?.removePrefix("www.")?.takeIf { it.contains('.') } ?: return null
+        val dir = java.io.File(filesDir, "icons2")
+        if (!dir.exists()) { java.io.File(filesDir, "icons").deleteRecursively(); dir.mkdirs() } // old per-site cache
+        return java.io.File(dir, "$key.png")
     }
 
     private fun saveFavicon(icon: Bitmap) {
