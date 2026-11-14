@@ -41,7 +41,7 @@ Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Install
 
-**From a release:** once releases are published, download the APK from [github.com/MKTVHub/mkTV/releases](https://github.com/MKTVHub/mkTV/releases) and install it with adb or a side-loading app.
+**From a release:** download `mkTV-<version>.apk` from [github.com/MKTVHub/mkTV/releases/latest](https://github.com/MKTVHub/mkTV/releases/latest) and install it with `adb install mkTV-<version>.apk` or a side-loading app (for example Downloader or Send Files to TV). Release APKs are signed by MKTVHub; the certificate SHA-256 is `16:45:35:90:AA:A7:BD:7E:86:EC:B1:BD:E8:CC:8E:B9:AE:66:F3:30:CB:7C:BE:DC:72:3D:5F:3A:E5:BE:B7:FD`.
 
 **From source** (JDK 17, Android SDK 35):
 

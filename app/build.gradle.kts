@@ -1,6 +1,16 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// Release signing: keys live outside the repo. Point MKTV_KEYSTORE_PROPS at a properties file
+// (storeFile, storePassword, keyAlias, keyPassword); default ~/.mktvhub/keystore.properties.
+// Without it, release builds are produced unsigned and debug builds are unaffected.
+val keystoreProps = Properties().apply {
+    val f = file(System.getenv("MKTV_KEYSTORE_PROPS") ?: "${System.getProperty("user.home")}/.mktvhub/keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -17,8 +27,20 @@ android {
         buildConfigField("String", "DEFAULT_BLOCKLIST_URL", "\"https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\"")
     }
 
+    signingConfigs {
+        if (keystoreProps.getProperty("storeFile") != null) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            signingConfig = signingConfigs.findByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
         }
