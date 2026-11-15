@@ -18,7 +18,7 @@ import kotlin.concurrent.thread
  * Every API call must carry the per-session token (from the QR code), so other devices on the
  * network can't drive the TV just by guessing the port.
  */
-class RemoteServer(private val context: Context, private val listener: Listener) {
+class RemoteServer(private val context: Context, private val listener: Listener, private val savedToken: () -> String? = { null }, private val saveToken: (String) -> Unit = {}) {
 
     interface Listener {
         fun onKey(key: String, action: String)
@@ -28,7 +28,11 @@ class RemoteServer(private val context: Context, private val listener: Listener)
         fun onPhoneConnected()
     }
 
-    val token: String = SecureRandom().let { r -> (1..10).map { ALPHABET[r.nextInt(ALPHABET.length)] }.joinToString("") }
+    /** Kept across restarts, so a paired phone's remote page keeps working when mkTV comes back. */
+    val token: String by lazy {
+        savedToken()?.takeIf { it.length == 10 && it.all { c -> c in ALPHABET } }
+            ?: SecureRandom().let { r -> (1..10).map { ALPHABET[r.nextInt(ALPHABET.length)] }.joinToString("") }.also(saveToken)
+    }
     var port = PORT
         private set
     private var server: ServerSocket? = null

@@ -21,8 +21,8 @@ android {
         applicationId = "com.mktvhub.mktv"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.1.0"
         buildConfigField("String", "DEFAULT_HOME_URL", "\"https://www.google.com\"")
         buildConfigField("String", "DEFAULT_BLOCKLIST_URL", "\"https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts\"")
     }

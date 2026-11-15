@@ -30,6 +30,13 @@ class Prefs(context: Context) {
     var askedWifiName: Boolean
         get() = p.getBoolean("asked_wifi_name", false)
         set(v) = p.edit().putBoolean("asked_wifi_name", v).apply()
+    /** Phone remote: on once the user has opened it, so it listens whenever mkTV is on screen; its pairing code. */
+    var remoteEnabled: Boolean
+        get() = p.getBoolean("remote_enabled", false)
+        set(v) = p.edit().putBoolean("remote_enabled", v).apply()
+    var remoteToken: String?
+        get() = p.getString("remote_token", null)
+        set(v) = p.edit().putString("remote_token", v).apply()
     var desktopMode: Boolean
         get() = p.getBoolean("desktop_mode", false)
         set(v) = p.edit().putBoolean("desktop_mode", v).apply()

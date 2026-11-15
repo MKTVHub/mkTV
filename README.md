@@ -118,6 +118,35 @@ adb install -r mkTV.apk
 
 <sub>Done? You can switch **Wireless debugging** off again. Pairing is remembered for next time.</sub>
 
+## Help & troubleshooting
+
+### Phone remote: "This site can't be reached"
+
+| Check | What to do |
+|---|---|
+| 📶 **Same network** | The phone's IP must start like the TV's (shown on the QR panel, e.g. `192.168.0.…`). Mesh routers and extenders often have separate 2.4 GHz / 5 GHz / guest names: join the exact one the TV is on. |
+| 🛡️ **VPN on the TV** | mkTV works with VPNs. Most (NordVPN, Proton, Surfshark…) keep the home network outside the tunnel. If the QR panel shows a ⚠ VPN warning, turn on **Allow LAN / local network access** in the VPN app, or exclude mkTV with split tunneling. |
+| 🛡️ **VPN or ad-blocker on the phone** | Pause it, or allow local network access in it. |
+| 📱 **Mobile data** | Turn off "Wi-Fi assist" / "Switch to mobile data" so the phone uses Wi-Fi. |
+| 🔒 **Router isolation** | Some routers block Wi-Fi devices from seeing each other ("AP / client isolation", common on guest networks). Turn it off, or use the main network. |
+| 🔁 **Old link** | The code changes every time mkTV restarts. Scan the QR that's on the TV now; don't reopen an old address from the phone's history. The address starts with `http://`, not `https://`. |
+
+### Share Wi-Fi doesn't fill in the network name
+
+Android reveals the Wi-Fi name only to apps allowed to use location, **and** only while **Location** is on (TV **Settings → Privacy → Location**). Or just type the name once; it's remembered.
+
+### Netflix, Prime Video or Disney+ won't play
+
+mkTV allows copy-protected (DRM) video, but these services decide what a browser may play. Some limit the quality or block TV browsers; their own TV apps work best.
+
+### "This update is signed differently"
+
+You installed a self-built copy (debug key). Install the release APK once over it after uninstalling, or keep updating from source.
+
+### Still stuck?
+
+[Open an issue](https://github.com/MKTVHub/mkTV/issues/new) with your TV model, Android version and what you see.
+
 ## Screenshots
 
 | | |

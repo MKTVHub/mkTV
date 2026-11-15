@@ -1878,11 +1878,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // ---- Phone remote (LAN web page, paired by QR code) ----
 
     private val remotePanel: View by lazy { findViewById(R.id.remotePanel) }
-    private val remoteServer by lazy { RemoteServer(this, this) }
+    private val remoteServer by lazy { RemoteServer(this, this, { prefs.remoteToken }, { prefs.remoteToken = it }) }
 
     private fun showPhoneRemote() {
         closeMenu()
-        remoteServer.start()
+        prefs.remoteEnabled = true
+        startRemote()
         val url = remoteServer.url()
         val steps = findViewById<TextView>(R.id.remoteSteps)
         val qr = findViewById<android.widget.ImageView>(R.id.remoteQr)
@@ -1913,10 +1914,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             hasLocation() && !locationOn() -> "1. Connect your phone to the same Wi-Fi as this TV. Turn on Location in the TV's settings to see its name here."
             else -> "1. Connect your phone to the same Wi-Fi as this TV."
         }
-        // A VPN on the TV often swallows replies to the phone: say so before the user wonders why it won't load.
-        val vpn = cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true }
+        // Most VPNs (NordVPN, Proton, ...) leave the home network alone and the remote just works. Warn only when
+        // the VPN's routes swallow this TV's own subnet, so replies to the phone would vanish into the tunnel.
+        val lanIp = remoteServer.address()?.let { runCatching { java.net.InetAddress.getByName(it) }.getOrNull() }
+        val vpn = lanIp != null && cm.allNetworks.any { n ->
+            cm.getNetworkCapabilities(n)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true &&
+                cm.getLinkProperties(n)?.routes?.any { it.matches(lanIp) } == true
+        }
         findViewById<TextView>(R.id.remoteSteps).text = "$step1\n2. Scan this code with the phone's camera.\n3. Use the remote and keyboard in your phone's browser." +
-            if (vpn) "\n\n⚠ A VPN is on. If the phone can't open the page, allow LAN / local network access in the VPN app, or exclude mkTV from it." else ""
+            if (vpn) "\n\n⚠ The VPN on this TV is routing your home network through its tunnel, so phones can't reach it. In the VPN app, allow LAN / local network access, or exclude mkTV." else ""
     }
 
     private fun closePhoneRemote() {
@@ -2278,6 +2284,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         fun open(url: String) { inSubMenu = false; closeMenu(); closeShortcuts(); load(url) }
         row(R.drawable.ic_home, "Website", "mktvhub.github.io") { open("https://mktvhub.github.io") }
         row(R.drawable.ic_star, "Star mkTV on GitHub", "Free and ad-free: a star helps others find it") { open("https://github.com/MKTVHub/mkTV") }
+        row(R.drawable.ic_info, "Help & troubleshooting", "Phone remote, VPN, Wi-Fi name, streaming") { open("https://github.com/MKTVHub/mkTV#help--troubleshooting") }
         row(R.drawable.ic_grid, "Source code & releases", "github.com/MKTVHub/mkTV/releases") { open("https://github.com/MKTVHub/mkTV/releases") }
         menuPanel.addView(TextView(this).apply {
             text = "Free and open source · © MKTVHub"
@@ -2369,7 +2376,21 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         (best ?: urlField).requestFocus()
     }
 
+    /** When mkTV last came to the front, and which OK presses started inside it. */
+    private var shownAt = 0L
+    private val okDown = HashSet<Int>()
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // OK pressed in the launcher to open mkTV (or double-pressed) must not also click the focused
+        // Home tile: drop OK in the first moment after coming to the front, and any OK release whose
+        // press happened before mkTV was in front.
+        val ok = event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == KeyEvent.KEYCODE_ENTER
+        if (ok && !isKeyboardVisible()) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (event.repeatCount == 0 && SystemClock.uptimeMillis() - shownAt < LAUNCH_GUARD_MS) return true
+                okDown += event.keyCode
+            } else if (event.action == KeyEvent.ACTION_UP && !okDown.remove(event.keyCode)) return true
+        }
         if (isKeyboardVisible()) return super.dispatchKeyEvent(event)
         val down = event.action == KeyEvent.ACTION_DOWN
         val f = currentFocus
@@ -2918,23 +2939,30 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     override fun onResume() {
+        shownAt = SystemClock.uptimeMillis(); okDown.clear()
         super.onResume()
         webView.onResume()
         hideSystemBars()
     }
 
-    /** The phone remote only listens while mkTV is on screen; it comes back with the same QR code. */
-    private var remoteWasRunning = false
+    /**
+     * The phone remote listens whenever mkTV is on screen (once the user has opened it), with the same
+     * port and pairing code, so a phone that already has the remote page open just keeps working.
+     * Coming back from the background the old socket can still be closing: retry for a few seconds.
+     */
+    private fun startRemote(attempt: Int = 0) {
+        remoteServer.start()
+        if (!remoteServer.running && attempt < 6) root.postDelayed({ if (!isFinishing) startRemote(attempt + 1) }, 700)
+    }
 
     override fun onStart() {
         super.onStart()
-        if (remoteWasRunning) remoteServer.start()
+        if (prefs.remoteEnabled) startRemote()
     }
 
     override fun onStop() {
         super.onStop()
-        remoteWasRunning = remoteServer.running
-        if (remoteWasRunning) remoteServer.stop()
+        remoteServer.stop()
     }
 
     override fun onDestroy() {
@@ -2948,6 +2976,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // endregion
 
     companion object {
+        /** OK presses this soon after mkTV comes to the front are the launcher's, not the user's choice. */
+        private const val LAUNCH_GUARD_MS = 900L
         private const val PRIVATE_PROFILE = "private"
 
         /** A Smart-TV browser UA: YouTube serves its remote-friendly TV interface to it. */
