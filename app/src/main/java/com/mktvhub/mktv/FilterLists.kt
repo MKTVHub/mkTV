@@ -43,6 +43,8 @@ object FilterLists {
     /** Biggest download accepted (OISD big is ~5 MB). */
     const val MAX_BYTES = 40L * 1024 * 1024
     const val REFRESH_MS = 24 * 3600_000L
+    /** After an automatic update attempt, wait this long before trying again (Update always tries). */
+    const val RETRY_MS = 3 * 3600_000L
 
     fun preset(id: String) = PRESETS.firstOrNull { it.id == id }
 

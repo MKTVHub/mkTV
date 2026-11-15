@@ -30,6 +30,8 @@ class AdBlocker(private val context: Context, private val prefs: Prefs) {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "blocklist") }
     private val dir get() = File(context.filesDir, "lists").apply { mkdirs() }
     private var builtFrom: List<String>? = null
+    /** Last automatic download attempt per list, so a dead URL or no network isn't retried on every resume. */
+    private val attempted = ConcurrentHashMap<String, Long>()
 
     init {
         // Before filter lists the one downloaded list lived here; keep it as StevenBlack's copy instead of downloading again.
@@ -56,7 +58,7 @@ class AdBlocker(private val context: Context, private val prefs: Prefs) {
      */
     fun load(force: Boolean = false, only: String? = null, onDone: (Int) -> Unit = {}) {
         val sources = FilterLists.sources(prefs.filterListsOn, prefs.customFilterLists)
-        sources.filter { only == null || it.id == only }.filter { force || stale(it.id) }
+        sources.filter { only == null || it.id == only }.filter { force || due(it.id) }
             .forEach { status[it.id] = (status[it.id] ?: Status()).copy(updating = true) }
         worker.execute {
             try {
@@ -64,7 +66,8 @@ class AdBlocker(private val context: Context, private val prefs: Prefs) {
                 var changed = false
                 for (s in sources) {
                     if (only != null && s.id != only) continue
-                    if (!force && !stale(s.id)) continue
+                    if (!force && !due(s.id)) continue
+                    attempted[s.id] = System.currentTimeMillis()
                     changed = update(s) || changed
                 }
                 if (changed) rebuild(sources)
@@ -84,9 +87,12 @@ class AdBlocker(private val context: Context, private val prefs: Prefs) {
         worker.execute { cacheFile(id).delete() }
     }
 
-    private fun stale(id: String): Boolean {
+    /** Copy over a day old (or missing), and no automatic attempt in the last few hours. */
+    private fun due(id: String): Boolean {
         val f = cacheFile(id)
-        return !f.exists() || System.currentTimeMillis() - f.lastModified() > FilterLists.REFRESH_MS
+        val now = System.currentTimeMillis()
+        val stale = !f.exists() || now - f.lastModified() > FilterLists.REFRESH_MS
+        return stale && now - (attempted[id] ?: 0L) > FilterLists.RETRY_MS
     }
 
     private fun rebuild(sources: List<FilterLists.Source>) {
@@ -127,11 +133,16 @@ class AdBlocker(private val context: Context, private val prefs: Prefs) {
         }
     }
 
-    private fun download(url: String, to: File) {
+    private fun download(url: String, to: File, hops: Int = 0) {
         val conn = URL(url).openConnection() as HttpURLConnection
         try {
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
+            // HttpURLConnection doesn't follow http <-> https redirects by itself.
+            if (conn.responseCode in 300..399 && hops < 5) {
+                val next = conn.getHeaderField("Location")?.let { URL(URL(url), it).toString() }
+                if (next != null && (next.startsWith("https://") || next.startsWith("http://"))) return download(next, to, hops + 1)
+            }
             if (conn.responseCode !in 200..299) error("HTTP ${conn.responseCode}")
             conn.inputStream.use { input ->
                 to.outputStream().use { out ->

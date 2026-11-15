@@ -1856,7 +1856,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private val ADD_LIST = "Add a list by address"
     private val ADD_ALLOW = "Allow a domain"
 
-    private fun rerenderWhenListsDone(): (Int) -> Unit = { runOnUiThread { if (settingsPanel.visibility == View.VISIBLE) renderSettings() } }
+    /** Not while typing: re-rendering would empty the field under the keyboard. */
+    private fun rerenderWhenListsDone(): (Int) -> Unit = { runOnUiThread { if (settingsPanel.visibility == View.VISIBLE && currentFocus !is EditText) renderSettings() } }
 
     /** Re-render after a click without pulling focus away: to [tag] if it still exists, else to the given field. */
     private fun rerenderListsFocus(tag: String?, fallback: String) = root.post {
