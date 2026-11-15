@@ -2169,6 +2169,16 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
         section(c, "Blocklists") { card -> renderFilterLists(card) }
 
+        section(c, "Phone remote") { card ->
+            card.addView(toggleRow("Phone remote", "Control mkTV from a phone browser on the same Wi-Fi. Turns on when you open ⋮ → Phone remote; only runs while mkTV is on screen.", prefs.remoteEnabled) {
+                setRemoteEnabled(it)
+            })
+            card.addView(actionRow("Unpair all phones", "Makes a new pairing code. Phones that had the remote must scan the new QR code.", "New code") { btn ->
+                unpairPhones(); btn.text = "Done ✓"
+            })
+            card.addView(subheading("Anyone with the code can control mkTV on this network. Use it on your home Wi-Fi, not guest or public networks. mkTV shows a notice whenever a new phone connects."))
+        }
+
         section(c, "Browsing") { card ->
             card.addView(toggleRow("Auto-hide the top bar", "Slides away while you use a page; press ▲ at the top or move the pointer up to bring it back", prefs.autoHideToolbar) {
                 prefs.autoHideToolbar = it; if (!it) showBar(autoHide = false)
@@ -2732,11 +2742,18 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
         findViewById<View>(R.id.remoteWifi).setOnClickListener { showShareWifi(fromRemote = true) }
         findViewById<View>(R.id.remoteHelpBtn).setOnClickListener { toggleRemoteHelp() }
-        // Only two buttons in the panel: keep ▲▼◀▶ between them instead of escaping to the Home screen behind.
-        val help = findViewById<View>(R.id.remoteHelpBtn); val share = findViewById<View>(R.id.remoteWifi)
-        listOf(help, share).forEach { it.nextFocusUpId = it.id; it.nextFocusDownId = it.id }
-        help.nextFocusLeftId = help.id; help.nextFocusRightId = share.id
-        share.nextFocusLeftId = help.id; share.nextFocusRightId = share.id
+        val newCode = findViewById<TextView>(R.id.remoteNewCode)
+        newCode.text = "New code"
+        newCode.setOnClickListener {
+            // Second press confirms: it disconnects every paired phone.
+            if (newCode.text == "New code") newCode.text = "Press again to unpair all" else unpairPhones()
+        }
+        // Only these buttons in the panel: keep ▲▼◀▶ among them instead of escaping to the Home screen behind.
+        val buttons = listOf(findViewById<View>(R.id.remoteHelpBtn), newCode, findViewById<View>(R.id.remoteWifi))
+        buttons.forEachIndexed { i, b ->
+            b.nextFocusUpId = b.id; b.nextFocusDownId = b.id
+            b.nextFocusLeftId = buttons[maxOf(i - 1, 0)].id; b.nextFocusRightId = buttons[minOf(i + 1, buttons.size - 1)].id
+        }
         remotePanel.visibility = View.VISIBLE
         onOverlayChanged(findViewById(R.id.remoteHelpBtn))
     }
@@ -2787,6 +2804,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             "Browser switched to https://" to "Tap “Continue to site”. In Chrome: Settings → Privacy and security → Always use secure connections → off. A private tab works too.",
             "Same Wi-Fi, not a guest network" to "Phone and TV must be on the same network. Guest Wi-Fi blocks devices from each other.",
             "VPN or ad blocker on the phone" to "Pause it, or allow LAN / local network access in it.",
+            "Use it at home" to "Anyone with this code can control mkTV, so use it on your own Wi-Fi, not public networks. New code unpairs every phone.",
             "Type it instead" to url.ifEmpty { "Open Phone remote again to see the address" },
         ), numbered = false)
     }
@@ -3080,9 +3098,24 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun icon(host: String): ByteArray? =
         faviconFile(host)?.takeIf { it.isFile && it.length() in 1..512_000 }?.readBytes()
 
-    override fun onPhoneConnected() = runOnUiThread {
+    override fun onPhoneConnected(address: String) = runOnUiThread {
+        val pairing = remotePanel.visibility == View.VISIBLE
         closePhoneRemote()
-        note("Phone remote connected")
+        // Every new device is announced, so a phone you don't know about can't drive the TV unnoticed.
+        showSnack(R.drawable.ic_phone, if (pairing) "Phone remote connected" else "New phone connected · $address", "Unpair all", reachable = !pairing) { unpairPhones() }
+    }
+
+    /** New pairing code: every phone that had the remote loses it until it scans the new QR code. */
+    private fun unpairPhones() {
+        remoteServer.resetToken()
+        if (remotePanel.visibility == View.VISIBLE) showPhoneRemote()
+        note("All phones unpaired. Scan the new code to connect again.")
+    }
+
+    /** Settings switch: off stops the server now and keeps it off until Phone remote is opened again. */
+    private fun setRemoteEnabled(on: Boolean) {
+        prefs.remoteEnabled = on
+        if (on) startRemote() else remoteServer.stop()
     }
 
     // ---- ⋮ menu ----
@@ -4060,6 +4093,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             "Protection" to R.drawable.ic_shield_on,
             "Blocklists" to R.drawable.ic_grid,
             "Privacy" to R.drawable.ic_private,
+            "Phone remote" to R.drawable.ic_phone,
             "Browsing" to R.drawable.ic_desktop,
             "Downloads" to R.drawable.ic_download,
             "Updates" to R.drawable.ic_update,

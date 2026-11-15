@@ -32,7 +32,7 @@ Every API call must carry the pairing token, either as:
 
 `GET /` also requires the token (it arrives via the QR code URL); the page then sends it on every API call. A missing or wrong token gets `401` (or `403`) and no other information.
 
-The token is random and generated once per app launch, so a QR code from an earlier launch stops working.
+The token is random and kept across restarts. **New code** in the Phone remote panel (or Settings → Phone remote → Unpair all phones) replaces it, so every old link stops working.
 
 ### Endpoints
 
@@ -146,8 +146,8 @@ As of 2026-11-15 (tested on an Android TV). Compared with this spec, `RemoteServ
 
 - **Matches:** endpoints and JSON shapes (plus the additions above); token via `?t=` or `X-Token` on every request including `GET /` and the new endpoints (wrong token: `403` with a short "scan the QR code" page); `home` opens the mkTV home screen (or the home page address); keys are injected through `BrowserActivity.dispatchKeyEvent`, and a held phone button auto-repeats after 450 ms like a real remote; `/api/open` goes through `normalizeInput()` and `load()`; the page is self-contained; responses send `Cache-Control: no-store` and `Referrer-Policy: no-referrer`; request bodies are capped at 64 KB; `POST`s require `Content-Type: application/json`. Request validation lives in `RemoteInput.kt` (unit-tested): key allowlist, `text` ≤ 1,000 characters, `url` ≤ 2,048 and http/https only after normalisation, numeric ranges for pointer moves and seeks, and a strict host pattern for icons.
 - **Port:** tries 8765, then 8766 to 8769 if the port is taken. The QR code always shows the port actually used.
-- **Token:** 10 characters from a 31-character alphabet (about 49 bits) from `SecureRandom`, compared in constant time (`MessageDigest.isEqual`). Recommended: raise to at least 128 bits.
-- **Lifetime:** `Prefs.remoteEnabled` turns on the first time Phone remote opens; from then on `onStart` starts the server (retrying for a few seconds while the old socket closes) and `onStop` stops it. The token lives in `Prefs.remoteToken`. The address skips VPN tunnel interfaces. There is no "unpair phones" button yet (Clear app data resets it).
+- **Token:** 26 characters from a 31-character alphabet (about 128 bits) from `SecureRandom`, compared in constant time (`MessageDigest.isEqual`). 10-character tokens saved by 1.1.0 stay valid until the next New code.
+- **Lifetime:** `Prefs.remoteEnabled` turns on the first time Phone remote opens; from then on `onStart` starts the server (retrying for a few seconds while the old socket closes) and `onStop` stops it. The token lives in `Prefs.remoteToken`. The address skips VPN tunnel interfaces. **New code** / **Unpair all phones** makes a new token. Settings → Phone remote has an on/off switch (off stops the server until Phone remote is opened again). Each new device (by IP address) gets a "New phone connected · <ip> · Unpair all" notice on the TV.
 - **Network scope:** the server listens on all interfaces, with no source-address or `Host` header check.
 - No rate limiting.
 - Responses carry no CORS headers (good: other origins cannot read responses).

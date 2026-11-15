@@ -32,18 +32,26 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         fun home(): JSONObject
         /** The TV's saved favicon (PNG) for [host], already validated by [RemoteInput.iconHost]. */
         fun icon(host: String): ByteArray?
-        fun onPhoneConnected()
+        /** First request from a phone at [address] since the code was last made; once per device. */
+        fun onPhoneConnected(address: String)
     }
 
-    /** Kept across restarts, so a paired phone's remote page keeps working when mkTV comes back. */
-    val token: String by lazy {
-        savedToken()?.takeIf { it.length == 10 && it.all { c -> c in ALPHABET } }
-            ?: SecureRandom().let { r -> (1..10).map { ALPHABET[r.nextInt(ALPHABET.length)] }.joinToString("") }.also(saveToken)
+    /** Kept across restarts, so a paired phone's remote page keeps working when mkTV comes back. 10-character codes from 1.1.0 stay valid. */
+    @Volatile var token: String = savedToken()?.takeIf { (it.length == TOKEN_LENGTH || it.length == 10) && it.all { c -> c in ALPHABET } } ?: newToken()
+        private set
+
+    private fun newToken() = SecureRandom().let { r -> (1..TOKEN_LENGTH).map { ALPHABET[r.nextInt(ALPHABET.length)] }.joinToString("") }.also(saveToken)
+
+    /** Unpairs every phone: old links and bookmarks stop working; the next phone scans the new QR code. */
+    fun resetToken() {
+        token = newToken()
+        seen.clear()
     }
     var port = PORT
         private set
     private var server: ServerSocket? = null
-    private var announced = false
+    /** Phones (by address) already announced on the TV for the current code. */
+    private val seen = java.util.Collections.synchronizedSet(HashSet<String>())
     private val page by lazy { context.assets.open("remote.html").bufferedReader().use { it.readText() } }
 
     val running get() = server?.isClosed == false
@@ -132,7 +140,7 @@ class RemoteServer(private val context: Context, private val listener: Listener,
             respond(403, "text/html", "<h2 style='font-family:sans-serif'>Scan the QR code shown on your TV (⋮ → Phone remote).</h2>")
             return
         }
-        if (!announced) { announced = true; listener.onPhoneConnected() }
+        sock.inetAddress?.hostAddress?.let { if (seen.add(it)) listener.onPhoneConnected(it) }
         // JSON-only POSTs: a cross-site HTML form can't send this content type without a CORS preflight.
         if (method == "POST" && headers["content-type"]?.substringBefore(';')?.trim()?.lowercase() != "application/json") {
             respond(415, "application/json", "{\"ok\":false}")
@@ -196,5 +204,7 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         const val PORT = 8765
         private const val TAG = "RemoteServer"
         private const val ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
+        /** 26 characters from 31: about 128 bits. */
+        private const val TOKEN_LENGTH = 26
     }
 }
