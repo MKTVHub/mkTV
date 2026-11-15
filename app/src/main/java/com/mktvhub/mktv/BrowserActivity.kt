@@ -2072,8 +2072,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (settingsDirty) {
             protectionOn = isProtected(pageHost)
             updateShield()
-            if (hasPage()) webView.reload() else if (prefs.startWithShortcuts) openShortcuts()
+            if (hasPage()) webView.reload()
         }
+        // Opening Settings hid Home; with no page behind, go back to Home rather than a blank screen.
+        if (!hasPage() && prefs.startWithShortcuts) openShortcuts()
     }
 
     /** Settings save as you change them; closing reloads the page if anything changed. */
@@ -4152,7 +4154,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        intent.dataString?.let { closeShortcuts(); load(normalizeInput(it)) }
+        // One mkTV (singleTask): a link from another app opens in a new tab, or in this one if it's still blank.
+        intent.dataString?.let { closeShortcuts(); val url = normalizeInput(it); if (hasPage()) openInNewTab(url, isPrivate = false) else load(url) }
     }
 
     override fun onPause() {
