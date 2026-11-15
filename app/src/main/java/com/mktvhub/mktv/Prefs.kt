@@ -163,6 +163,11 @@ class Prefs(context: Context) {
     /** Parsed once; read on every keystroke in the address bar. */
     private var historyCache: List<History.Entry>? = null
 
+    /** Downloads panel rows, newest first (normal mode only; private-mode downloads are never saved). */
+    var downloads: List<Downloads.Entry>
+        get() = Downloads.fromJson(p.getString("downloads", null))
+        set(v) = p.edit().putString("downloads", Downloads.toJson(v)).apply()
+
     /** [WebSearch.Engine.id] used for address-bar searches and suggestions. */
     var searchEngine: String
         get() = p.getString("search_engine", null) ?: "google"

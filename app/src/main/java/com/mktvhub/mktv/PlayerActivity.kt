@@ -31,6 +31,7 @@ class PlayerActivity : Activity() {
         WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
 
         val url = intent.getStringExtra(EXTRA_URL) ?: return finish()
+        val local = !url.startsWith("http", ignoreCase = true)
         val headers = buildMap {
             intent.getStringExtra(EXTRA_REFERER)?.let { put("Referer", it) }
             intent.getStringExtra(EXTRA_ORIGIN)?.let { put("Origin", it) }
@@ -42,7 +43,8 @@ class PlayerActivity : Activity() {
             .apply { intent.getStringExtra(EXTRA_USER_AGENT)?.let { setUserAgent(it) } }
 
         val exo = ExoPlayer.Builder(this)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(http))
+            // DefaultDataSource: http(s) through [http], plus content:// for downloaded files opened from Downloads.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(this, http)))
             .build()
         player = exo
 
@@ -65,10 +67,12 @@ class PlayerActivity : Activity() {
 
         exo.addListener(object : Player.Listener {
             override fun onPlayerError(e: PlaybackException) {
-                error.text = "Can't play this stream\n${e.errorCodeName}\n\nPress Back to return to the page"
+                error.text = if (local) "Can't play this file\n${e.errorCodeName}\n\nPress Back, then try Open with…"
+                    else "Can't play this stream\n${e.errorCodeName}\n\nPress Back to return to the page"
             }
         })
         val mime = when {
+            local -> null // a downloaded file: let ExoPlayer detect the container (MP4, MKV, MP3, ...)
             url.contains(".mpd", ignoreCase = true) -> MimeTypes.APPLICATION_MPD
             else -> MimeTypes.APPLICATION_M3U8
         }
