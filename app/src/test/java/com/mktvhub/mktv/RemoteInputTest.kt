@@ -114,4 +114,14 @@ class RemoteInputTest {
         assertTrue(RemoteInput.favouriteTarget("toggle", false))
         assertFalse(RemoteInput.favouriteTarget(null, true))
     }
+
+    @Test fun navigationTarget() {
+        assertEquals("pointer", RemoteInput.navigationTarget("toggle", "jump"))
+        assertEquals("jump", RemoteInput.navigationTarget("toggle", "pointer"))
+        assertEquals("jump", RemoteInput.navigationTarget("jump", "jump")) // already there: stays
+        assertEquals("pointer", RemoteInput.navigationTarget("pointer", "jump"))
+        assertNull(RemoteInput.navigationTarget("mouse", "jump"))
+        assertNull(RemoteInput.navigationTarget(null, "jump"))
+        assertNull(RemoteInput.navigationTarget("", "pointer"))
+    }
 }

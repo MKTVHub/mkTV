@@ -1072,6 +1072,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val showing = shortcutsPanel.visibility == View.VISIBLE && isInside(shortcutsPanel, currentFocus)
         renderShortcuts()
         if (showing) { onOverlayChanged(currentFocus?.takeIf { isInside(shortcutsPanel, it) } ?: firstHomeTile()); return }
+        // A video or song playing behind Home stops (its place saved first): nobody is watching it, and its
+        // progress checks shouldn't keep running under Home. Play resumes it after closing Home.
+        if (hasPage() && customView == null) {
+            sampleWatching()
+            webView.evaluateJavascript("window.__sp && __sp.pause && __sp.pause()", null)
+        }
         shortcutsPanel.visibility = View.VISIBLE
         findViewById<View>(R.id.shortcutsScroll).scrollTo(0, 0)
         onOverlayChanged(firstHomeTile() ?: findViewById(R.id.homeRemote))
@@ -3725,6 +3731,26 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
                 org.json.JSONObject().put("ok", true).put("fav", isFavourite(url))
             })
+            latch.countDown()
+        }
+        latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+        return out.get() ?: org.json.JSONObject().put("ok", false)
+    }
+
+    /** The phone's Jump / Pointer button: same as ⋮ → Navigation, with a note on the TV; answered with the mode now. */
+    override fun onNavigation(mode: String?): org.json.JSONObject {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val out = java.util.concurrent.atomic.AtomicReference<org.json.JSONObject>()
+        runOnUiThread {
+            val next = RemoteInput.navigationTarget(mode, prefs.navMode)
+            if (next != null && next != prefs.navMode) {
+                prefs.navMode = next
+                applyNavMode()
+                if (menuOpen() && !inSubMenu) buildMenu()
+                if (::settingsPanel.isInitialized && settingsPanel.visibility == View.VISIBLE) renderSettings()
+                note(if (next == "jump") "Navigation: Jump" else "Navigation: Pointer")
+            }
+            out.set(org.json.JSONObject().put("ok", next != null).put("mode", prefs.navMode))
             latch.countDown()
         }
         latch.await(1, java.util.concurrent.TimeUnit.SECONDS)

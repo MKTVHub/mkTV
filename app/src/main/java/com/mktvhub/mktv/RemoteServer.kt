@@ -30,6 +30,8 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         fun onMedia(action: String, value: Double)
         /** Adds the TV's current page to Favourites or removes it ([RemoteInput.favouriteTarget]); {"ok", "fav"}. */
         fun onFavourite(action: String?): JSONObject
+        /** Jump / pointer navigation, as ⋮ → Navigation ([RemoteInput.navigationTarget]); {"ok", "mode"}. */
+        fun onNavigation(mode: String?): JSONObject
         fun state(): JSONObject
         fun home(): JSONObject
         /** The TV's saved favicon (PNG) for [host], already validated by [RemoteInput.iconHost]. */
@@ -208,6 +210,10 @@ class RemoteServer(private val context: Context, private val listener: Listener,
             }
             method == "POST" && path == "/api/favourite" ->
                 respond(200, "application/json", listener.onFavourite(json.optString("action")).toString())
+            method == "POST" && path == "/api/navigation" -> {
+                val out = listener.onNavigation(json.optString("mode"))
+                respond(if (out.optBoolean("ok")) 200 else 400, "application/json", out.toString())
+            }
             else -> respond(404, "application/json", "{\"ok\":false}")
         }
     }

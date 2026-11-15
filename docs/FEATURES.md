@@ -20,7 +20,7 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 **How.** `CursorView` runs a `Choreographer` frame loop while a direction is held. With **Pointer acceleration** on (default) speed ramps from 260 to 1,300 dp/s over 0.9 s; off, it moves at a steady 600 dp/s. **Pointer speed** (Slow / Normal / Fast) scales that by 0.6× / 1× / 1.6×, and also scales phone touchpad moves (1.8 dp per phone px at Normal). Both are in Settings → Navigation, apply at once and are saved in `Prefs` (`pointerSpeed`, `pointerAccel`). The math is in `PointerMotion` (unit-tested). At an edge it calls `onEdgeScroll`, which sends a mouse wheel event at the pointer.
 
-**Where.** `CursorView.kt`, `PointerMotion.kt`, `BrowserActivity.applyPointerTuning`, `scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation or Settings → Navigation (`Prefs.navMode`).
+**Where.** `CursorView.kt`, `PointerMotion.kt`, `BrowserActivity.applyPointerTuning`, `scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation, Settings → Navigation, or the phone remote's **Jump / Pointer** button (`Prefs.navMode`).
 
 **Limits.** Slower than jump mode for long pages. Hover-only menus get a touch, not a hover.
 
@@ -57,7 +57,7 @@ The header has **Phone remote**, **History** (see below) and **Private browsing*
 
 Settings → Start screen can replace it with a fixed home page address.
 
-**How.** The glow is a drawable (`home_bg.xml`), so it costs no memory or start-up time. Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none.
+**How.** The glow is a drawable (`home_bg.xml`), so it costs no memory or start-up time. Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none. Each site is tried at most once per run (`SiteIcons.claim`), and an icon that arrives only redraws Home when a tile on screen gets it. Home redraws a row only when what it shows changed (`HomeFocus.signature`), and the remote's highlight stays on the same tile, or the one now in its place, for every row (`HomeFocus.pick`, tested in `HomeFocusTest`). Opening Home over a page pauses its video or audio (its place is saved first for Continue watching); Play resumes it after closing Home.
 
 **Where.** `// region Shortcuts` (`arrangeHome`, `renderSectionTools`, `renderPopularAdd`, `Prefs.homeOrder`, `Prefs.hiddenSections`, `Prefs.popular`; Favourites folders and edit actions: `renderFavourites`, `renderFavActions`), `Bookmarks.kt` (pure tree operations, tested in `BookmarksTest`), `Prefs.bookmarks` (still stored under the old `shortcuts` key: links are `{title,url}`, a folder is `{title,items}`; old lists load unchanged), `Prefs.shortcuts` (flattened), `Prefs.recent`. The phone remote's `/api/home` lists favourites flattened, folders opened in place.
 
@@ -355,7 +355,7 @@ The PIN pad is a full-screen overlay: a 3×4 grid of big keys (1–9, ✕ Cancel
 
 ## Phone remote
 
-**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, **Add to Favourites** for the TV's current page (a star that turns to **In Favourites**; tap again to remove), live typing into the focused field, the TV's Home tiles, a Now playing card while a video plays (seek bar, ±10 s, play/pause, full screen, captions, a speed chip that cycles 0.75× to 2×, and a sleep timer chip with Off / 15 / 30 / 60 min / End), and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, **Add to Favourites** for the TV's current page (a star that turns to **In Favourites**; tap again to remove), live typing into the focused field, the TV's Home tiles, a Now playing card while a video plays (seek bar, ±10 s, play/pause, full screen, captions, a speed chip that cycles 0.75× to 2×, and a sleep timer chip with Off / 15 / 30 / 60 min / End), a **Jump / Pointer** button that switches the TV's navigation mode (switching to Pointer shows the touchpad), and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
 
 **Panel.** Two tabs: **Connect** (QR code, steps, address, Help, New code, Share Wi-Fi) and **Devices (n)**, which lists each phone or computer using the remote with the current code (address and last activity) with a **Disconnect** button. Disconnect refuses that address until the next New code (everyone shares one code, so the address is what can be shut out).
 

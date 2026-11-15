@@ -45,6 +45,7 @@ The token is random and kept across restarts. **New code** in the Phone remote p
 | `POST` | `/api/move` | `{"dx": 12.5, "dy": -3}` | `{"ok": true}` |
 | `POST` | `/api/media` | `{"action": "seek", "to": 93}`, `{"action": "speed", "value": 1.5}`, `{"action": "sleep", "value": 30}` | `{"ok": true}` |
 | `POST` | `/api/favourite` | `{"action": "add"}`, `{"action": "remove"}` | `{"ok": true, "fav": true}`, or `{"ok": false}` with no page open |
+| `POST` | `/api/navigation` | `{"mode": "jump"}`, `{"mode": "pointer"}`, `{"mode": "toggle"}` | `{"ok": true, "mode": "pointer"}`; `400` with `{"ok": false}` for any other mode |
 | `GET` | `/api/state` | | `{"title", "url", "nav", "pointer", "sleep", "canFav", "fav", "media"?}` |
 | `GET` | `/api/home` | | `{"popular": [...], "favourites": [...], "recent": [...]}` |
 | `GET` | `/api/icon?h=<host>` | | The TV's saved favicon (`image/png`), or `404` |
@@ -82,6 +83,8 @@ Live typing is incremental: the phone remembers what it has sent, and on each ch
 **`/api/media`**: `action` is `seek` (with `to` in seconds, 0 to 172,800, clamped to the video's duration), `fullscreen` (the same full screen toggle as ▼ in watch mode) or `captions` (toggles the first `subtitles`/`captions` `<track>`; sites that draw their own captions are not covered). Play/pause and ±10 s use `/api/key` (`playpause`, `rew`, `ff`), the same path as the TV remote. `speed` with `value` one of `0.75`, `1`, `1.25`, `1.5`, `2` (sets the video's speed and remembers it for the site, as the TV's playback controls do; in memory only while private), and `sleep` with `value` one of `0` (off), `15`, `30`, `60` (minutes) or `-1` (pause at the end of the current video). Any other value, or a missing `value`, gets `400`.
 
 **`/api/favourite`**: adds the TV's current page to Favourites or removes it, like ⋮ → Add to Favourites (same title and toast on the TV). `add` and `remove` do nothing when the page already is / isn't saved, so a phone showing stale state can't undo the change; any other `action` toggles (`RemoteInput.favouriteTarget`). The answer has the new state; `/api/state` reports it as `fav` (and `canFav`: a page is open).
+
+**`/api/navigation`**: switches the TV between Jump and Pointer navigation, exactly like ⋮ → Navigation, and the TV shows "Navigation: Jump" or "Navigation: Pointer". `jump` and `pointer` do nothing when the TV is already in that mode, so a phone showing stale state can't flip it back; `toggle` switches to the other one (`RemoteInput.navigationTarget`). The answer has the mode now; `/api/state` reports it as `nav`. On the remote page, the **Jump / Pointer** button under the D-pad shows the current mode with its icon, and switching to Pointer brings up the touchpad.
 
 **`/api/state`**: the current page title and URL, the navigation mode (`nav`: `jump` or `pointer`), `pointer` (true when a touchpad drag would move the pointer), `sleep`: `{"mode", "left"}` (`mode` is the sleep choice above, `0` when off; `left` is whole seconds until a timed sleep fires, else `0`), and `media` while the page has a big video: `{"has": true, "playing", "t", "d", "cc", "ccOn", "fs", "speed"}` (`d` is 0 for live streams; `speed` is the video's current playback rate). The page polls it every second while a video is present, every 2.5 s otherwise, and not at all while the phone tab is hidden.
 

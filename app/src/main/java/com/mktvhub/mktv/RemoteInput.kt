@@ -106,4 +106,14 @@ object RemoteInput {
         "remove" -> false
         else -> !saved
     }
+
+    /**
+     * Navigation mode after /api/navigation: "jump" or "pointer" as asked (a no-op when already in it, so a stale
+     * phone can't flip it back), "toggle" the other one; anything else is rejected (null).
+     */
+    fun navigationTarget(mode: String?, current: String): String? = when (mode) {
+        "jump", "pointer" -> mode
+        "toggle" -> if (current == "jump") "pointer" else "jump"
+        else -> null
+    }
 }
