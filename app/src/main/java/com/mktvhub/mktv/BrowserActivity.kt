@@ -2046,6 +2046,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (!filling) return
         filling = false
         webView.evaluateJavascript("window.__sp && __sp.unfill && __sp.unfill()", null)
+        afterFill()
+    }
+
+    /** Fill hid the top bar even with auto-hide off; bring it back for those users. */
+    private fun afterFill() {
+        if (!prefs.autoHideToolbar) showBar(autoHide = false)
         if (watching) showDock()
     }
 
@@ -2053,7 +2059,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun syncFill(pageFilling: Boolean) {
         if (pageFilling == filling) return
         filling = pageFilling
-        if (filling) { if (!watching) enterWatch(false); hideBar() } else if (watching) showDock()
+        if (filling) { if (!watching) enterWatch(false); hideBar() } else afterFill()
     }
 
     // endregion
@@ -2960,7 +2966,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun scheduleHideBar(delay: Long) {
         root.removeCallbacks(hideBarRunnable)
-        if (prefs.autoHideToolbar) root.postDelayed(hideBarRunnable, delay)
+        if (prefs.autoHideToolbar || filling) root.postDelayed(hideBarRunnable, delay)
     }
 
     private fun hideBar() {
