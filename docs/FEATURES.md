@@ -271,11 +271,36 @@ Sections and what they control (`renderSettings`):
 | Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
 | Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
+| Parental controls | PIN lock, Change PIN, what the PIN protects, Safe search, Blocked sites, Forgot PIN (see [Parental controls](#parental-controls)) |
 | Blocklists | Total blocked domains and Update all; built-in filter lists (on/off, count, last update, Update); lists added by address (also Remove); Add a list by address; Never blocked (allowlist) with Allow <current site> and Allow a domain |
 | Browsing | Auto-hide the top bar, Auto-unmute videos, Default zoom (− / + and Reset sites), Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
 | Updates | Installed version and status, Check now / Update, Check for updates (daily, on by default) |
 
 Settings save as you change them. Closing Settings reloads the page if anything that needs a reload changed.
+
+## Parental controls
+
+**What.** For a shared living-room TV. Settings → Parental controls:
+
+- **PIN lock.** Turning it on asks for a 4-digit PIN twice. Turning it off, or Change PIN, always asks for the current PIN.
+- **Ask for the PIN before** (all on when a PIN is set): opening Settings; opening private browsing; Downloads (starting a download, and installing an APK from Downloads); the phone remote (turning it on, from ⋮ / Home / Settings, and New code, including the "Unpair all" notice). The Parental controls section itself always needs the PIN, even when "Opening Settings" is off; while locked it shows a summary and an Unlock button.
+- **Safe search.** Google searches get `safe=active`, Bing `adlt=strict`, DuckDuckGo `kp=1`, replacing any weaker value. Applies to searches typed or spoken in the address bar (`WebSearch`), to every app-initiated load, and to page navigations to those search addresses.
+- **Blocked sites.** A list of domains that never load, with their subdomains, in every tab (private too). Type a site in "Block a site" and press Done or move away; Remove takes it off. A blocked page shows a calm "Blocked by parental controls" notice instead of the site; requests to it from other pages (frames, scripts, images) get an empty answer. The phone remote's "open URL" is refused for a blocked site and the TV shows a notice.
+- **Forgot PIN?** Clearing mkTV's data in the TV's own settings (Apps → mkTV → Clear data) resets it, and also deletes Favourites, history and every other mkTV setting.
+
+The PIN pad is a full-screen overlay: a 3×4 grid of big keys (1–9, ✕ Cancel, 0, ⌫), four dots, no OK key (the 4th digit submits). The remote's number keys and the phone remote's typing work too; Back cancels. A wrong PIN shakes the dots and says how many tries are left; after 5 wrong tries the pad waits 30 s with a countdown (kept across app restarts). A correct PIN unlocks mkTV for 5 minutes, or until mkTV goes to the background.
+
+**How.** `Parental.kt` (pure, unit-tested in `ParentalTest`): PBKDF2-HMAC-SHA256 with a random 16-byte salt and 12,000 iterations, written on `javax.crypto.Mac` because `SecretKeyFactory` has no PBKDF2-SHA256 before Android 8; constant-time compare; lockout and unlock-window rules; blocked-site matching (`HostRules.isBlocked`); SafeSearch URL rewriting; the blocked page's HTML. `PinPad.kt` draws the pad and runs the enter / confirm / change steps. In `BrowserActivity`: `needsPin`, `askPin` and `guarded` gate `showSettings`, `enterPrivate`, `showPhoneRemote`, `setRemoteEnabled`, `unpairPhones`, the WebView `DownloadListener` and `DownloadCenter.Host.beforeInstall`. Blocking is the first check in `shouldInterceptRequest`, ahead of the ad blocker, so turning blocking off, pausing a site, the allowlist or "Open anyway" can't get past it. SafeSearch runs in `load()` and first thing in `shouldOverrideUrlLoading` for main frames. `dispatchKeyEvent` hands digits to the pad and swallows Menu and Search while it is open; `onText` feeds phone typing to it; `onBackPressed` cancels it first; `onStop` locks again.
+
+**Where.** `Parental.kt`, `PinPad.kt`, `// ---- Parental controls` in the Settings region (`renderParental`), `Prefs.pinRecord`, `pinGuards`, `pinLockout`, `safeSearch`, `blockedSites`.
+
+**Limits.**
+- A determined person with adb, or who clears mkTV's data, gets past it; it's meant to keep children from changing things, not to stop the TV's owner. A 4-digit PIN's hash can be brute-forced quickly by anyone who can read mkTV's storage (for example from a device backup).
+- SafeSearch covers Google, Bing and DuckDuckGo only. Brave and Startpage aren't rewritten, and searches a results page makes in the background without navigating can slip through. YouTube Restricted Mode is not set: it needs a header or cookie on every YouTube request, which WebView can't add to a page's own requests.
+- Blocking is by domain: other sites showing the same content, or a site reached by IP address, aren't blocked. Home tiles and History still list blocked sites (opening them shows the notice).
+- Any activity in front of mkTV (the native player, voice search, the system installer) counts as leaving mkTV, so the PIN is asked again afterwards.
+- While the phone remote is already on, its pairing QR can be shown without the PIN (a paired phone still goes through the same PIN prompts).
+- mkTV's own update (Settings → Updates) is not behind the PIN.
 
 ## Other behaviour
 

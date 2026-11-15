@@ -19,11 +19,12 @@ In normal mode, in the app's private storage (`/data/data/com.mktvhub.mktv`):
 | Sites where blocking is paused | same | Settings → Protection → Resume |
 | Allowlist (domains never blocked) | same | Settings → Blocklists → Remove |
 | All-time blocked count | same | Uninstall |
+| Parental controls: the PIN as a salted PBKDF2 hash (never the PIN itself), what it protects, the wrong-try count and wait, Safe search on/off, blocked sites | same | Settings → Parental controls (PIN lock off, Remove); Android "Clear storage" resets all of it |
 | Site icons (one PNG per site you visited or saved, and for the Popular tiles) | `files/icons/` | Uninstall / "Clear storage" only |
 | Downloaded filter lists (one file per list that is or was on) | `files/lists/<id>.txt` | Replaced on refresh; deleted when you remove a list you added |
 | Cookies, cache, local storage, IndexedDB, back/forward history | WebView's own storage | Clear browsing data |
 
-`android:allowBackup` is currently `true`, so Android's device backup may include the settings and history files with favourites, recents and history.
+`android:allowBackup` is currently `true`, so Android's device backup may include the settings and history files with favourites, recents and history. That includes the parental controls PIN hash: a 4-digit PIN has only 10,000 possible values, so anyone who can read the backup or mkTV's storage can recover it. Treat the PIN as a lock for children, not as protection against the TV's owner.
 
 ## What is sent over the network
 
@@ -37,6 +38,8 @@ mkTV itself only makes these requests. Everything else is the web pages you open
 6. **Search suggestions (off by default).** When you turn on Settings → Search → Search suggestions, what you type in the address bar is sent to the chosen engine's suggestion service as you type, without cookies and with the WebView user agent: Google (`suggestqueries.google.com`), DuckDuckGo (`duckduckgo.com/ac`), Bing (`api.bing.com`), Brave (`search.brave.com/api/suggest`) or Startpage (`www.startpage.com/osuggestions`). Text that looks like an address is never sent, and nothing is sent in private browsing. Suggestions from your own Favourites and History are matched on the TV and send nothing.
 
 7. **Downloads.** Only after you press Download in mkTV's prompt. http(s) files are fetched by Android's system Download Manager with the cookies the site set for that address (in private browsing: the private session's cookies, or none on older WebViews without separate profiles), the WebView user agent and the page you were on as Referer, the same things the page itself would send. `data:` and `blob:` downloads are already on the TV and make no request.
+
+**Safe search (off by default).** With Settings → Parental controls → Safe search on, mkTV adds `safe=active` (Google), `adlt=strict` (Bing) or `kp=1` (DuckDuckGo) to search addresses before they load, so the engine learns that strict filtering was asked for. Nothing else is added or sent. Blocked sites are checked on the TV; nothing about them is sent anywhere.
 
 Address-bar text that is not a URL is searched with the engine you chose in Settings → Search (default Google: `https://www.google.com/search?q=...`).
 

@@ -206,6 +206,28 @@ class Prefs(context: Context) {
         get() = PageZoom.parse(p.getStringSet("site_zoom", emptySet())!!)
         set(v) = p.edit().putStringSet("site_zoom", PageZoom.serialize(v)).apply()
 
+    // ---- Parental controls (see Parental) ----
+    /** Salted PBKDF2 hash of the PIN (see [Parental.record]), never the PIN itself; null = no PIN lock. */
+    var pinRecord: String?
+        get() = p.getString("pin_record", null)
+        set(v) = p.edit().putString("pin_record", v).apply()
+    /** What the PIN protects ([Parental.GUARDS] ids); all of them unless the user turned some off. */
+    var pinGuards: Set<String>
+        get() = p.getStringSet("pin_guards", null)?.toSet() ?: Parental.GUARDS.toSet()
+        set(v) = p.edit().putStringSet("pin_guards", v).apply()
+    /** Wrong tries in a row and the wait after too many; kept so closing mkTV doesn't reset the wait. */
+    var pinLockout: Parental.Lockout
+        get() = Parental.Lockout(p.getInt("pin_fails", 0), p.getLong("pin_locked_until", 0))
+        set(v) = p.edit().putInt("pin_fails", v.fails).putLong("pin_locked_until", v.until).apply()
+    /** Google, Bing and DuckDuckGo searches always use their strict filter. */
+    var safeSearch: Boolean
+        get() = p.getBoolean("safe_search", false)
+        set(v) = p.edit().putBoolean("safe_search", v).apply()
+    /** Sites (and their subdomains) that never load, in any tab. */
+    var blockedSites: Set<String>
+        get() = p.getStringSet("blocked_sites", emptySet())!!.toSet()
+        set(v) = p.edit().putStringSet("blocked_sites", v).apply()
+
     companion object {
         val HOME_SECTIONS = listOf("pop", "fav", "rec")
         /** Curated Popular row a fresh install starts with. */
