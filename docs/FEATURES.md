@@ -124,7 +124,7 @@ With the on-screen keyboard open, Back closes the keyboard and ▼ then moves in
 
 ## In-app updates
 
-**What.** Once a day at launch, mkTV asks GitHub for the latest release. If it's newer than the installed version, the home screen shows a card: "mkTV 1.2.0 is available" with **Update** and **Later**. Update downloads `mkTV.apk` (progress on the button) and opens Android's installer, which asks you to confirm. Later hides the card until the next version. Settings → Updates shows the status, has **Check now** / **Update**, and a switch to turn the daily check off.
+**What.** Once a day at launch, mkTV asks GitHub for the latest release. If it's newer than the installed version, the home screen shows a card: "mkTV 1.3.0 is available" with **Update** and **Later**. Update downloads `mkTV.apk` (progress on the button) and opens Android's installer, which asks you to confirm. Later hides the card until the next version. Settings → Updates shows the status, has **Check now** / **Update**, and a switch to turn the daily check off.
 
 **How.** `GET https://api.github.com/repos/MKTVHub/mkTV/releases/latest`; drafts, pre-releases and releases without a `mkTV.apk` asset are ignored. Versions are compared numerically (`1.0.10` > `1.0.9`). The result is cached, so the card shows on later launches without another request. Failures are silent (no card) and don't use up the day's check unless GitHub answered. The download goes to the app's cache (`cache/updates/`), must match the asset's size, and must be signed with the same key as the installed app (otherwise mkTV explains why Android would refuse it). It is shared with the installer through a `FileProvider`. If mkTV isn't yet allowed to install apps, it opens that setting first (`REQUEST_INSTALL_PACKAGES`).
 
