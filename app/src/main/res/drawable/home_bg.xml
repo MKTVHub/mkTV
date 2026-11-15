@@ -1,0 +1,10 @@
+<!-- Home background: the old near-black, with a soft violet glow from the top-left (drawn, so it costs no memory or start-up time) -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item><shape android:shape="rectangle"><solid android:color="#F0101217" /></shape></item>
+    <item>
+        <shape android:shape="rectangle">
+            <gradient android:type="radial" android:centerX="0.2" android:centerY="0" android:gradientRadius="900dp"
+                android:startColor="#387C3AED" android:centerColor="#14DB2777" android:endColor="#00101217" />
+        </shape>
+    </item>
+</layer-list>

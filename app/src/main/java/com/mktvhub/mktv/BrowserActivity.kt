@@ -1021,7 +1021,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val folder = tree.getOrNull(openFolder) as? Bookmarks.Folder
         val favs = prefs.shortcuts
         // With no page behind it, this is the start screen: opaque and nothing to close back to.
-        shortcutsPanel.setBackgroundColor(if (hasPage()) 0xF0101217.toInt() else 0xFF101217.toInt())
+        // Base colour (see-through a little over an open page) under the violet glow of home_bg.
+        ((shortcutsPanel.background.mutate() as android.graphics.drawable.LayerDrawable).getDrawable(0) as android.graphics.drawable.GradientDrawable)
+            .setColor(if (hasPage()) 0xF0101217.toInt() else 0xFF101217.toInt())
         findViewById<View>(R.id.shortcutsClose).visibility = if (hasPage()) View.VISIBLE else View.GONE
         findViewById<View>(R.id.addThisPage).visibility = if (hasPage() && !isFavourite(webView.url)) View.VISIBLE else View.GONE
         findViewById<TextView>(R.id.shortcutsEdit).apply {
@@ -1962,11 +1964,20 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private lateinit var settingsPanel: View
     private var settingsDirty = false
+    /** The section shown on the right; the sidebar on the left picks it. */
+    private var settingsTab = SETTINGS_TABS[0].first
     private var confirmClear = false
 
     private fun setupSettings() {
         settingsPanel = findViewById(R.id.settingsPanel)
+        // Branding: the app icon before the Home title.
+        findViewById<TextView>(R.id.homeTitle).apply {
+            setCompoundDrawablesRelative(appIcon(36), null, null, null)
+            compoundDrawablePadding = dp(16)
+        }
     }
+
+    private fun appIcon(size: Int) = androidx.core.content.ContextCompat.getDrawable(this, R.mipmap.ic_launcher)!!.mutate().apply { setBounds(0, 0, dp(size), dp(size)) }
 
     private fun showSettings() {
         menuScroll.visibility = View.GONE
@@ -1976,11 +1987,83 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         closeShortcuts()
         settingsDirty = false
         confirmClear = false
+        renderSettingsNav()
         renderSettings()
         findViewById<android.widget.ScrollView>(R.id.settingsScroll).scrollTo(0, 0)
         settingsPanel.visibility = View.VISIBLE
-        onOverlayChanged(findViewById<ViewGroup>(R.id.settingsContent).findViewWithTag("first"))
+        onOverlayChanged(findViewById<ViewGroup>(R.id.settingsNav).findViewWithTag("settab:$settingsTab"))
     }
+
+    /** Sidebar: one row per section. Moving onto a row shows that section; OK or ▶ goes into it. */
+    private fun renderSettingsNav() {
+        val nav = findViewById<LinearLayout>(R.id.settingsNav)
+        nav.removeAllViews()
+        SETTINGS_TABS.forEachIndexed { i, (title, icon) ->
+            nav.addView(TextView(this).apply {
+                text = title
+                tag = "settab:$title"
+                id = View.generateViewId()
+                textSize = 17f
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
+                compoundDrawablePadding = dp(16)
+                setPadding(dp(16), 0, dp(16), 0)
+                setBackgroundResource(R.drawable.nav_item)
+                isFocusable = true; isClickable = true
+                setOnFocusChangeListener { _, has -> if (has && settingsTab != title) selectSettingsTab(title) }
+                setOnClickListener { firstSettingsControl()?.requestFocus() }
+                setOnKeyListener { _, code, ev ->
+                    if (code != KeyEvent.KEYCODE_DPAD_RIGHT) return@setOnKeyListener false
+                    if (ev.action == KeyEvent.ACTION_DOWN) firstSettingsControl()?.requestFocus()
+                    true
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(52)).apply { if (i > 0) topMargin = dp(4) })
+        }
+        (0 until nav.childCount).map { nav.getChildAt(it) }.let { rows ->
+            rows.forEach { it.nextFocusLeftId = it.id }
+            rows.first().nextFocusUpId = rows.first().id
+            rows.last().nextFocusDownId = rows.last().id
+        }
+        markSettingsTab()
+    }
+
+    private fun selectSettingsTab(title: String) {
+        settingsTab = title
+        confirmClear = false
+        markSettingsTab()
+        renderSettings()
+        findViewById<android.widget.ScrollView>(R.id.settingsScroll).scrollTo(0, 0)
+    }
+
+    private fun markSettingsTab() {
+        val nav = findViewById<LinearLayout>(R.id.settingsNav)
+        for (i in 0 until nav.childCount) (nav.getChildAt(i) as TextView).apply {
+            val on = tag == "settab:$settingsTab"
+            isSelected = on
+            setTextColor(if (on) android.graphics.Color.WHITE else 0xFFD1D5DB.toInt())
+            setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            compoundDrawableTintList = android.content.res.ColorStateList.valueOf(if (on) 0xFF818CF8.toInt() else 0xFF9CA3AF.toInt())
+        }
+    }
+
+    /** Settings arrows: ◀ off the left of a section returns to its sidebar row; ▲▼ never leave the panel for the toolbar. */
+    private fun settingsKey(f: View?, code: Int): Boolean {
+        val content = findViewById<ViewGroup>(R.id.settingsContent)
+        if (f == null || !isInside(content, f)) return false
+        val dir = when (code) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> View.FOCUS_LEFT
+            KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP
+            KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN
+            else -> return false
+        }
+        val next = f.focusSearch(dir)
+        if (next != null && isInside(content, next)) return false
+        if (dir == View.FOCUS_LEFT) findViewById<ViewGroup>(R.id.settingsNav).findViewWithTag<View>("settab:$settingsTab")?.requestFocus()
+        return true
+    }
+
+    private fun firstSettingsControl(): View? =
+        findViewById<ViewGroup>(R.id.settingsContent).getFocusables(View.FOCUS_DOWN).firstOrNull { it.isShown && it.isEnabled }
 
     private fun closeSettings() {
         currentFocus?.let { if (it is EditText) { hideKeyboard(it); it.clearFocus() } }
@@ -2142,20 +2225,24 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val version = packageManager.getPackageInfo(packageName, 0).versionName
         c.addView(TextView(this).apply {
             text = "mkTV $version"
-            setTextColor(0xFF6B7280.toInt()); textSize = 13f
+            setTextColor(0xFF9CA3AF.toInt()); textSize = 14f
             gravity = android.view.Gravity.CENTER
+            setCompoundDrawablesRelative(appIcon(28), null, null, null)
+            compoundDrawablePadding = dp(10)
             setPadding(0, dp(24), 0, 0)
-        })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = android.view.Gravity.CENTER_HORIZONTAL })
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    /** Builds a Settings section, but only the one open in the sidebar. */
     private fun section(parent: LinearLayout, title: String, build: (LinearLayout) -> Unit) {
+        if (title != settingsTab) return
         parent.addView(TextView(this).apply {
-            text = title.uppercase()
-            setTextColor(0xFF818CF8.toInt()); textSize = 13f; letterSpacing = 0.12f
+            text = title
+            setTextColor(android.graphics.Color.WHITE); textSize = 22f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(dp(4), dp(20), 0, dp(10))
+            setPadding(dp(4), dp(10), 0, dp(14))
         })
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -3019,7 +3106,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun trapMenuFocus() {
         val rows = mutableListOf<View>()
         fun walk(v: View) { if (v.isFocusable && v.visibility == View.VISIBLE) rows += v else if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i)) }
-        walk(menuPanel)
+        for (i in 0 until menuPanel.childCount) walk(menuPanel.getChildAt(i)) // the panel itself is clickable (so focusable): start at its rows
         rows.forEach { if (it.id == View.NO_ID) it.id = View.generateViewId(); it.nextFocusLeftId = it.id; it.nextFocusRightId = it.id }
         rows.firstOrNull()?.let { it.nextFocusUpId = it.id }
         rows.lastOrNull()?.let { it.nextFocusDownId = it.id }
@@ -3378,6 +3465,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
         // Toolbar / overlays / bottom bar: plain TV focus navigation.
         if (!pageActive()) {
+            if (settingsPanel.visibility == View.VISIBLE && down && settingsKey(f, event.keyCode)) return true
             // ▼ from the address field goes into its suggestions, not to the page.
             if (suggestOpen() && f === urlField && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (down) suggestPanel.findViewWithTag<View>("sug:0")?.requestFocus()
@@ -3964,6 +4052,18 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // endregion
 
     companion object {
+        /** Settings sidebar, in order: each title must match a section(...) in renderSettings. */
+        private val SETTINGS_TABS = listOf(
+            "Navigation" to R.drawable.ic_mode_jump,
+            "Start screen" to R.drawable.ic_home,
+            "Search" to R.drawable.ic_search,
+            "Protection" to R.drawable.ic_shield_on,
+            "Blocklists" to R.drawable.ic_grid,
+            "Privacy" to R.drawable.ic_private,
+            "Browsing" to R.drawable.ic_desktop,
+            "Downloads" to R.drawable.ic_download,
+            "Updates" to R.drawable.ic_update,
+        )
         /** OK presses this soon after mkTV comes to the front are the launcher's, not the user's choice. */
         private const val LAUNCH_GUARD_MS = 900L
         private const val PRIVATE_PROFILE = "private"

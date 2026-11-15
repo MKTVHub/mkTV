@@ -1,0 +1,6 @@
+<!-- Settings sidebar row: the open section stays tinted while focus is in its content -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true"><shape android:shape="rectangle"><corners android:radius="12dp" /><solid android:color="#FF2A2E37" /><stroke android:width="2dp" android:color="#FF818CF8" /></shape></item>
+    <item android:state_selected="true"><shape android:shape="rectangle"><corners android:radius="12dp" /><solid android:color="#FF23263A" /></shape></item>
+    <item><shape android:shape="rectangle"><corners android:radius="12dp" /><solid android:color="#00000000" /></shape></item>
+</selector>
