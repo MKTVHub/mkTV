@@ -289,6 +289,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         wv.setDownloadListener { url, ua, disposition, mime, length ->
             // Without profiles the private session has no cookie jar of its own: send none rather than the normal ones.
             val cookie = if (url.startsWith("http") && (!isPrivate || multiProfile)) runCatching { cookieManagerFor(isPrivate).getCookie(url) }.getOrNull() else null
+            // A file typed into the address bar leaves no page behind: show Home rather than a blank screen.
+            if (wv === webView && wv.copyBackForwardList().size == 0) openShortcuts()
             downloads.offer(wv, isPrivate, url, ua, disposition, mime, length, cookie)
         }
 

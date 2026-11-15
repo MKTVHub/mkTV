@@ -127,7 +127,10 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
             .setNegativeButton("Cancel") { _, _ -> answered = true; onNo() }
             .setOnDismissListener { if (!answered) { answered = true; onNo() } }
             .create()
-        d.setOnShowListener { d.getButton(AlertDialog.BUTTON_POSITIVE)?.requestFocus() }
+        d.setOnShowListener {
+            d.getButton(AlertDialog.BUTTON_NEGATIVE)?.withIcon(R.drawable.ic_close)
+            d.getButton(AlertDialog.BUTTON_POSITIVE)?.apply { withIcon(R.drawable.ic_download); requestFocus() }
+        }
         d.show()
     }
 
@@ -458,6 +461,7 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
 
     fun onPanelShown() {
         confirmClear = false; confirmDelete = null
+        clearBtn.withIcon(R.drawable.ic_delete)
         clearBtn.setOnClickListener {
             if (!confirmClear) { confirmClear = true; clearBtn.text = "Press again to clear"; return@setOnClickListener }
             confirmClear = false
@@ -586,8 +590,9 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
         return parts.joinToString(" · ")
     }
 
-    private fun button(label: String, danger: Boolean = false, onClick: (TextView) -> Unit) = TextView(activity).apply {
+    private fun button(label: String, icon: Int, danger: Boolean = false, onClick: (TextView) -> Unit) = TextView(activity).apply {
         text = label
+        withIcon(icon)
         gravity = Gravity.CENTER
         setTextColor(if (danger) 0xFFFCA5A5.toInt() else 0xFFD1D5DB.toInt()); textSize = 14f
         setBackgroundResource(if (danger) R.drawable.btn_danger else R.drawable.toolbar_button)
@@ -598,6 +603,13 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
     }
 
     /** One download: the row itself opens it, then its buttons. Returns the row and its focusable parts, in order. */
+    /** Icon before the label, tinted like the text (so danger buttons get a red icon). */
+    private fun TextView.withIcon(icon: Int) {
+        setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
+        compoundDrawablePadding = dp(8)
+        compoundDrawableTintList = textColors
+    }
+
     private fun row(e: Downloads.Entry): Pair<View, List<View>> {
         val state = stateOf(e)
         val kind = Downloads.kindOf(e.name, e.mime)
@@ -649,18 +661,18 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
         row.addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val buttons = mutableListOf<TextView>()
         when (state) {
-            State.RUNNING -> buttons += button("Cancel") { delete(e); renderPanel() }
+            State.RUNNING -> buttons += button("Cancel", R.drawable.ic_close) { delete(e); renderPanel() }
             State.DONE -> {
-                if (kind == Downloads.Kind.VIDEO || kind == Downloads.Kind.AUDIO) buttons += button("Open with…") { open(e, chooser = true) }
-                buttons += button("Remove") { removeFromList(e); renderPanel() }
-                buttons += button(if (confirmDelete == e.id) "Press again to delete" else "Delete", danger = true) { b ->
+                if (kind == Downloads.Kind.VIDEO || kind == Downloads.Kind.AUDIO) buttons += button("Open with…", R.drawable.ic_open_in_new) { open(e, chooser = true) }
+                buttons += button("Remove", R.drawable.ic_close) { removeFromList(e); renderPanel() }
+                buttons += button(if (confirmDelete == e.id) "Press again to delete" else "Delete", R.drawable.ic_delete, danger = true) { b ->
                     if (confirmDelete != e.id) { confirmDelete = e.id; b.text = "Press again to delete"; return@button }
                     confirmDelete = null
                     delete(e); renderPanel()
                     host.note("Deleted ${e.name}")
                 }
             }
-            State.FAILED, State.GONE -> buttons += button("Remove") { removeFromList(e); renderPanel() }
+            State.FAILED, State.GONE -> buttons += button("Remove", R.drawable.ic_close) { removeFromList(e); renderPanel() }
         }
         buttons.forEachIndexed { k, b ->
             b.tag = "dl:${e.id}:${k + 1}"
