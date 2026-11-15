@@ -10,7 +10,7 @@ object RemoteInput {
         "playpause", "ff", "rew", "next", "prev", "volup", "voldown", "mute", "pageup", "pagedown",
     )
     val ACTIONS = setOf("down", "up", "press")
-    val MEDIA = setOf("seek", "fullscreen", "captions")
+    val MEDIA = setOf("seek", "fullscreen", "captions", "speed", "sleep")
     const val MAX_TEXT = 1000
     const val MAX_URL = 2048
     const val MAX_MOVE = 400.0
@@ -56,6 +56,19 @@ object RemoteInput {
 
     /** Absolute seek target in seconds, or null if it isn't a sane number. */
     fun seekTo(t: Double): Double? = t.takeIf { it.isFinite() && it >= 0 && it <= MAX_SEEK }
+
+    /**
+     * /api/media: the checked value for [action], or null to answer 400. seek: target seconds ([to]);
+     * speed: one of [PlaybackSpeed.LEVELS] ([value]); sleep: minutes from [PlaybackSpeed.SLEEP] ([value], 0 = off,
+     * -1 = end of video); fullscreen / captions take no value (0).
+     */
+    fun mediaValue(action: String?, to: Double, value: Double): Double? = when (action?.takeIf { it in MEDIA }) {
+        "seek" -> seekTo(to)
+        "speed" -> PlaybackSpeed.exact(value)
+        "sleep" -> PlaybackSpeed.sleepChoice(value)?.toDouble()
+        null -> null
+        else -> 0.0
+    }
 
     /** Only http(s) pages may be opened from the phone (checked after the address-bar normalisation). */
     fun openable(url: String?): Boolean {

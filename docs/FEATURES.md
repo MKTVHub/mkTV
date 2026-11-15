@@ -128,8 +128,8 @@ With the on-screen keyboard open, Back closes the keyboard and ▼ then moves in
 
 **What.** Turns on by itself when a large video (over a quarter of the screen) is playing. The remote then controls the video:
 - Vertical feeds (portrait video, for example short-video feeds): ▲ previous, ▼ next.
-- Normal video: ▼ full screen, ▲ leave full screen or leave watch mode.
-- ◀ ▶ seek 10 s, OK pause/play, Back browse the page again.
+- Normal video: ▼ full screen, ▲ playback controls.
+- ◀ ▶ seek 10 s, OK pause/play, hold OK playback controls, Back leave full screen, then browse the page again.
 - A key-hint dock slides up for 2.5 s after each press, and a large symbol flashes for feedback.
 
 Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or not. After Back, watch mode does not re-enter on the same URL.
@@ -139,6 +139,21 @@ Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or n
 **Where.** `// ---- Watch mode ----` (`checkWatch`, `enterWatch`, `exitWatch`, `handleWatchKey`, `handleMediaKey`, `toggleTheater`, `showDock`, `flash`), `// region Zoom and full-screen fill` (`afterFullscreenRequest`, `enterFill`, `exitFill`, `syncFill`), `PageZoom.kt`, `page_script.js` (`mainVideo`, `feed`, `fullscreen`, `fill`, `unfill`).
 
 **Limits.** Videos inside cross-origin iframes (most embedded players) and inside shadow DOM are invisible to the script, so watch mode, fill and media keys don't reach them. Use the player's own controls or "Watch full screen" if a stream was detected. Fill hides the site's own controls and any captions drawn as page elements (captions from `<track>` still show).
+
+## Playback controls and sleep timer
+
+**What.** In watch mode, ▲ (normal video) or holding OK (any video, including vertical feeds) opens a small panel over the video, also in full screen:
+- **−10 s · Pause/Play · +10 s.**
+- **Speed:** 0.75×, 1×, 1.25×, 1.5×, 2×. Remembered per site (host, `www.` ignored) and applied to every video on that site as it starts, including the native player. Private browsing keeps speeds in memory only.
+- **Sleep timer:** Off, 15, 30, 60 min, End of video. The heading shows the time left. When it fires, every video and audio in the open tabs pauses (and the native player, if it is on screen), the notice "Sleep timer: paused" appears with a Play button, and the screen is allowed to turn off until the next key press. mkTV stays open. **End of video** pauses the current video about half a second before it ends, so the site's autoplay of the next video never starts; it is offered only for videos with a duration (not live streams).
+
+Every button has an icon; the current speed and timer are highlighted. Changes apply at once; Back (or Menu) closes the panel. The D-pad stays inside it. The phone remote's Now playing card has the same speed and sleep controls.
+
+**How.** The panel is built in code (`renderControls`) and counts as an overlay (`overlayOpen`), but does not bring the toolbar back. Speed: `__sp.rate(r)` sets the wanted speed for the document; a capture-phase `playing` listener applies it once per media source (so a speed picked in the site's own menu stays for that video). The site's speed is sent on page load (`applySpeed`, next to `applyZoom`) and when watch mode starts. Timed sleep is a single `Handler.postDelayed` (no polling; the panel's countdown updates once a second only while it is open). End of video: `__sp.sleepEnd(true)` arms a capture-phase `timeupdate` check in the page; the app re-arms it and learns that it fired with checks spaced by the video's remaining time (2 to 30 s apart). After pausing, the page holds off autoplay for a few seconds; Play from mkTV ends the hold.
+
+**Where.** `// ---- Playback controls` in `BrowserActivity` (`openControls`, `renderControls`, `setSpeed`, `applySpeed`, `setSleep`, `checkSleepEnd`, `sleepNow`), `PlaybackSpeed.kt` (levels, labels, per-site storage, sleep choices; unit-tested), `Prefs.siteSpeed`, `page_script.js` (`rate`, `pause`, `sleepEnd`), `PlayerActivity` (`EXTRA_SPEED`, `pauseForSleep`, `sleepAtEnd`).
+
+**Limits.** Players in cross-origin iframes and sites that reset `playbackRate` themselves may ignore the speed. A speed picked in the native player's own ⚙ menu is not saved. End of video in the native player pauses at the stream's end (a single stream has nothing to autoplay). If a site starts its next video by other means than `ended` (for example a timer in the last seconds), End of video may pause the next one instead. The timer stops if mkTV is closed.
 
 ## Page zoom
 
@@ -162,7 +177,7 @@ Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or n
 
 **How.** `shouldInterceptRequest` records manifest URLs with the Referer and Origin the page sent, skipping variant playlists under an already-seen master. The player receives those headers plus the WebView user agent and the cookies for that URL.
 
-**Where.** `HostRules.isStreamUrl`, `isVariantOf`, `DetectedStream`, `updateStreamButton`, `openStreamPicker`, `playNative`, `PlayerActivity.kt`.
+**Where.** `HostRules.isStreamUrl`, `isVariantOf`, `DetectedStream`, `updateStreamButton`, `openStreamPicker`, `playNative`, `PlayerActivity.kt`. The player starts at the site's saved speed (see Playback controls); its ⚙ menu also has a speed setting.
 
 **Limits.** DRM-protected streams will not play. Streams that need tokens generated by page scripts per segment may fail. Detection is by URL extension only; manifests without `.m3u8`/`.mpd` in the URL are missed.
 
@@ -286,7 +301,7 @@ Settings save as you change them. Closing Settings reloads the page if anything 
 
 ## Phone remote
 
-**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing seek bar while a video plays, and "open URL". No app install on the phone.
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing card while a video plays (seek bar, ±10 s, play/pause, full screen, captions, a speed chip that cycles 0.75× to 2×, and a sleep timer chip with Off / 15 / 30 / 60 min / End), and "open URL". No app install on the phone.
 
 **Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `onMove`, `onMedia`, `state`, `home`), `RemoteInput.kt`. Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
 

@@ -195,10 +195,11 @@ class RemoteServer(private val context: Context, private val listener: Listener,
                 respond(200, "application/json", ok)
             }
             method == "POST" && path == "/api/media" -> {
-                val action = json.optString("action").takeIf { it in RemoteInput.MEDIA }
-                val to = RemoteInput.seekTo(json.optDouble("to", 0.0))
-                if (action == null || (action == "seek" && to == null)) respond(400, "application/json", "{\"ok\":false}")
-                else { listener.onMedia(action, to ?: 0.0); respond(200, "application/json", ok) }
+                val action = json.optString("action")
+                // A missing "value" is NaN, so speed / sleep without one is rejected rather than read as 0.
+                val value = RemoteInput.mediaValue(action, json.optDouble("to", 0.0), json.optDouble("value", Double.NaN))
+                if (value == null) respond(400, "application/json", "{\"ok\":false}")
+                else { listener.onMedia(action, value); respond(200, "application/json", ok) }
             }
             else -> respond(404, "application/json", "{\"ok\":false}")
         }

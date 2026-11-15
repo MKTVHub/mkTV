@@ -40,6 +40,7 @@ app/src/main/
     Updates.kt            Pure: GitHub release parsing, version comparison
     PageZoom.kt           Pure: zoom levels, per-site zoom storage, full-screen fill fallback decision
     PointerMotion.kt      Pure: pointer-mode speed levels, acceleration ramp, phone touchpad gain
+    PlaybackSpeed.kt      Pure: watch-mode speed levels and labels, per-site speed storage, sleep timer choices
     Bookmarks.kt          Pure: Favourites tree (links + one level of folders), JSON compatible with the old flat list
     Tabs.kt               Tab state + pure TabPolicy (live WebView limit, close order, low-memory rule)
     Downloads.kt          Pure: download file names, Content-Disposition, sizes, data: URLs, the saved Downloads list
@@ -55,7 +56,7 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates and Android 7–9 downloads)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, BookmarksTest, TabsTest, DownloadsTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):
@@ -68,7 +69,7 @@ app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterLists
 | `// region Toolbar` | Toolbar buttons, `submitAddress`, address-bar suggestions, voice search, shield badge and panel, per-site pause, blocked snackbar, stream button and picker, `playNative` |
 | `// region Shortcuts` | Home screen: Popular, Favourites, Recently visited, tiles, favicons; the History page; in-app updates (check, home card, download, install) |
 | `// region Settings` | Settings screen built in code (`section`, `toggleRow`, `actionRow`, `fieldRow`, `segmented`) |
-| `// region Remote control → cursor` | Phone remote panel and `RemoteServer.Listener` callbacks (`onKey`, `onText`, `onOpen`, `state`), ⋮ menu, clear-data submenu, focus/overlay rules, `dispatchKeyEvent`, YouTube TV passthrough, jump mode, pointer touch/scroll synthesis, auto-hiding bar, watch mode, dock, `onBackPressed` |
+| `// region Remote control → cursor` | Phone remote panel and `RemoteServer.Listener` callbacks (`onKey`, `onText`, `onOpen`, `state`), ⋮ menu, clear-data submenu, focus/overlay rules, `dispatchKeyEvent`, YouTube TV passthrough, jump mode, pointer touch/scroll synthesis, auto-hiding bar, watch mode, dock, playback controls and sleep timer, `onBackPressed` |
 | `// region Helpers` | `normalizeInput`, keyboard, system bars, toasts, lifecycle |
 | `companion object` | `POPULAR` list, user-agent strings, request codes |
 

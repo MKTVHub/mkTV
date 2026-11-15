@@ -24,6 +24,8 @@ import androidx.media3.ui.PlayerView
 @OptIn(UnstableApi::class)
 class PlayerActivity : Activity() {
     private var player: ExoPlayer? = null
+    private var playerView: PlayerView? = null
+    private var screen: FrameLayout? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,6 +49,8 @@ class PlayerActivity : Activity() {
             .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(androidx.media3.datasource.DefaultDataSource.Factory(this, http)))
             .build()
         player = exo
+        // The page's speed for this site (watch mode controls); the player's own ⚙ menu can change it here.
+        exo.setPlaybackSpeed((PlaybackSpeed.exact(intent.getDoubleExtra(EXTRA_SPEED, PlaybackSpeed.DEFAULT)) ?: PlaybackSpeed.DEFAULT).toFloat())
 
         val root = FrameLayout(this).apply { keepScreenOn = true; setBackgroundColor(android.graphics.Color.BLACK) }
         val view = PlayerView(this).apply {
@@ -63,9 +67,16 @@ class PlayerActivity : Activity() {
         root.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(error, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         setContentView(root)
+        screen = root
+        playerView = view
         view.requestFocus()
 
         exo.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                // Sleep timer "End of video": say why it stopped (a single stream has no autoplay to stop).
+                if (state == Player.STATE_ENDED && sleepAtEnd) { sleepAtEnd = false; sleepPause() }
+            }
+
             override fun onPlayerError(e: PlaybackException) {
                 error.text = if (local) "Can't play this file\n${e.errorCodeName}\n\nPress Back, then try Open with…"
                     else "Can't play this stream\n${e.errorCodeName}\n\nPress Back to return to the page"
@@ -83,12 +94,27 @@ class PlayerActivity : Activity() {
 
     override fun onStop() {
         super.onStop()
+        if (current?.get() === this) current = null
         player?.pause()
     }
 
     override fun onStart() {
         super.onStart()
+        current = java.lang.ref.WeakReference(this)
         player?.play()
+    }
+
+    /** The browser's sleep timer fired while this player is on screen: pause, say so, let the screen sleep. */
+    private fun sleepPause() {
+        player?.pause()
+        playerView?.showController()
+        screen?.keepScreenOn = false
+        android.widget.Toast.makeText(this, "Sleep timer: paused", android.widget.Toast.LENGTH_LONG).show()
+    }
+
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        screen?.let { if (!it.keepScreenOn) it.keepScreenOn = true }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onDestroy() {
@@ -104,5 +130,19 @@ class PlayerActivity : Activity() {
         const val EXTRA_USER_AGENT = "ua"
         const val EXTRA_COOKIE = "cookie"
         const val EXTRA_TITLE = "title"
+        /** Playback speed, one of [PlaybackSpeed.LEVELS]. */
+        const val EXTRA_SPEED = "speed"
+
+        /** The player on screen (between onStart and onStop), so the browser's sleep timer can pause it. */
+        private var current: java.lang.ref.WeakReference<PlayerActivity>? = null
+        /** Sleep timer set to "End of video"; cleared by whichever (page or this player) reaches the end first. */
+        @Volatile var sleepAtEnd = false
+
+        /** Main thread only. True if a player was on screen. */
+        fun pauseForSleep(): Boolean {
+            val a = current?.get() ?: return false
+            a.sleepPause()
+            return true
+        }
     }
 }

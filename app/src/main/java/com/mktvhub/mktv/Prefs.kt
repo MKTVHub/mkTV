@@ -213,6 +213,11 @@ class Prefs(context: Context) {
         get() = PageZoom.parse(p.getStringSet("site_zoom", emptySet())!!)
         set(v) = p.edit().putStringSet("site_zoom", PageZoom.serialize(v)).apply()
 
+    /** Per-host video speed (see PlaybackSpeed; normal mode only, private browsing keeps its speeds in memory). */
+    var siteSpeed: Map<String, Double>
+        get() = PlaybackSpeed.parse(p.getStringSet("site_speed", emptySet())!!)
+        set(v) = p.edit().putStringSet("site_speed", PlaybackSpeed.serialize(v)).apply()
+
     companion object {
         val HOME_SECTIONS = listOf("pop", "fav", "rec")
         /** Curated Popular row a fresh install starts with. */

@@ -36,6 +36,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `Tabs.kt` | `Tab` state and the Android-free, unit-tested `TabPolicy` (live WebView limit, close order, low-memory rule) |
 | `Updates.kt` | Android-free, unit-tested: GitHub release parsing, numeric version comparison, once-a-day check |
 | `PageZoom.kt` | Android-free, unit-tested: zoom levels and steps, per-host keys and storage, when to fall back to full-screen fill |
+| `PlaybackSpeed.kt` | Android-free, unit-tested: watch-mode speed levels and labels, per-host speed storage, sleep timer choices and countdown text |
+| `PointerMotion.kt` | Android-free, unit-tested: pointer-mode speed (Slow / Normal / Fast, acceleration ramp or steady) and the phone touchpad gain |
 | `Downloads.kt` | Android-free, unit-tested: download file names (`Content-Disposition`, URL, MIME), sanitising, sizes, `data:` URL parsing, the Downloads list and its JSON |
 | `DownloadCenter.kt` | WebView downloads: confirm prompt, system `DownloadManager` (page cookies, user agent, Referer), `data:`/`blob:` saving (blob read in the page and copied out in chunks with `evaluateJavascript`), status polling, Open/Remove/Delete, the Downloads panel rows. Private-mode entries stay in memory |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
@@ -67,6 +69,7 @@ There is no `addJavascriptInterface`. All communication is Kotlin calling `evalu
 | `__sp.clear()` | | leaving watch mode |
 | `__sp.media()` | `{has,playing,vertical}` for the largest visible video | `checkWatch()` |
 | `__sp.toggle()` / `seek(s)` / `feed(step)` / `fullscreen()` | state strings (`fullscreen()`: `on`, `off`, `fail` or `null`) | watch mode and media keys |
+| `__sp.rate(r)` / `pause()` / `sleepEnd(on)` | the rate / `ok` / `{fired}` or `{fired,left}` | playback controls: per-site speed (`applySpeed`, `setSpeed`), sleep timer (`sleepNow`, `checkSleepEnd`) |
 | `__sp.zoom(pct)` | the level applied | `applyZoom` on page start, first paint and finish, and on every zoom change |
 | `__sp.fill()` / `unfill()` | `fill` or `null` / `off` | `enterFill` / `exitFill` (full-screen fallback) |
 
@@ -94,7 +97,7 @@ While the page is active, `pollRing` runs every 350 ms: it re-reads `__sp.rect()
 10. Jump mode: arrows call `jump(dir)`. The first auto-repeat of ▲/▼ (`repeatCount == 1`) jumps to the site's fixed top or bottom bar once per hold. OK taps the ring centre; with no ring it first picks a start element.
 11. Pointer mode: arrows press/release directions on `CursorView`; OK taps at the pointer.
 
-Back goes through `onBackPressed`: exit page fullscreen, leave fill mode (unless an overlay is open), leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close downloads, close the shield panel, leave home Edit, leave a Favourites folder, close home, leave the toolbar, leave the bottom notice, go back in history, close the tab if other tabs are open, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
+Back goes through `onBackPressed`: close the playback controls, exit page fullscreen, leave fill mode (unless an overlay is open), leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close downloads, close the shield panel, leave home Edit, leave a Favourites folder, close home, leave the toolbar, leave the bottom notice, go back in history, close the tab if other tabs are open, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
 
 ### Clicking and scrolling
 

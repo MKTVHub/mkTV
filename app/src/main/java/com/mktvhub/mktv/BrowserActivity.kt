@@ -278,6 +278,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 scheduleHideBar(3000)
                 if (!docStartScript) view.evaluateJavascript(pageScript, null)
                 applyZoom(view, url)
+                applySpeed(view, url)
                 if (!urlField.hasFocus()) urlField.setText(url)
                 updateNav()
             }
@@ -428,6 +429,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         tabs.filter { it.isPrivate }.forEach { destroyTab(it) }
         tabs.removeAll { it.isPrivate }
         privateZoom.clear() // private zoom levels live only as long as private browsing
+        privateSpeed.clear()
         downloads.dropPrivate()
         if (multiProfile) {
             // The profile can only be deleted once all its WebViews are gone.
@@ -928,7 +930,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 .putExtra(PlayerActivity.EXTRA_ORIGIN, s.origin)
                 .putExtra(PlayerActivity.EXTRA_USER_AGENT, webView.settings.userAgentString)
                 .putExtra(PlayerActivity.EXTRA_COOKIE, cookieManagerFor(inPrivate).getCookie(s.url))
-                .putExtra(PlayerActivity.EXTRA_TITLE, webView.title),
+                .putExtra(PlayerActivity.EXTRA_TITLE, webView.title)
+                .putExtra(PlayerActivity.EXTRA_SPEED, speedFor(webView.url)),
         )
     }
 
@@ -2730,7 +2733,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         shortcutsPanel.visibility == View.VISIBLE || settingsPanel.visibility == View.VISIBLE ||
             shieldPanel.visibility == View.VISIBLE || menuOpen() || remotePanel.visibility == View.VISIBLE ||
             historyPanel.visibility == View.VISIBLE || wifiPanel.visibility == View.VISIBLE || suggestOpen() ||
-            downloadsPanel.visibility == View.VISIBLE
+            downloadsPanel.visibility == View.VISIBLE || controlsOpen()
 
     // ---- Phone remote (LAN web page, paired by QR code) ----
 
@@ -3192,6 +3195,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             "captions" -> webView.evaluateJavascript("window.__sp ? __sp.captions() : null") { r ->
                 when (r?.trim('"')) { "on" -> flash("CC"); "off" -> flash("CC off") }
             }
+            // Values already checked against the allowlists by RemoteInput.mediaValue.
+            "speed" -> if (hasPage()) setSpeed(value)
+            "sleep" -> { setSleep(value.toInt()); if (!controlsOpen()) showTip("Sleep timer · ${PlaybackSpeed.sleepLabel(sleepMode)}") }
         }
     }
 
@@ -3201,7 +3207,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val media = java.util.concurrent.atomic.AtomicReference<String?>()
         runOnUiThread {
             base.set(org.json.JSONObject().put("title", webView.title ?: "mkTV").put("url", webView.url ?: "")
-                .put("nav", prefs.navMode).put("pointer", pointerActive()))
+                .put("nav", prefs.navMode).put("pointer", pointerActive())
+                // Sleep timer: minutes chosen (0 off, -1 end of video) and whole seconds left for a timed one.
+                .put("sleep", org.json.JSONObject().put("mode", sleepMode).put("left", (sleepLeftMs() + 999) / 1000)))
             if (!hasPage()) latch.countDown()
             else webView.evaluateJavascript("window.__sp ? __sp.status() : null") { r -> media.set(r); latch.countDown() }
         }
@@ -3559,7 +3567,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     /** Overlays use normal TV focus; the page underneath must not steal it. */
     private fun onOverlayChanged(focusTarget: View?) {
-        if (overlayOpen()) showBar(autoHide = false) else scheduleHideBar(2500)
+        // The playback controls sit over the video: no toolbar sliding in over it.
+        if (overlayOpen()) { if (!controlsOpen()) showBar(autoHide = false) } else scheduleHideBar(2500)
         webContainer.descendantFocusability =
             if (overlayOpen()) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
         // requestFocusFromTouch: a mouse click or tap leaves touch mode on, where a plain
@@ -3628,6 +3637,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (isKeyboardVisible()) return super.dispatchKeyEvent(event)
         val down = event.action == KeyEvent.ACTION_DOWN
         val f = currentFocus
+        // After the sleep timer let the screen turn off, any key keeps it on again.
+        if (down && !root.keepScreenOn) root.keepScreenOn = true
+        // Menu over the playback controls just closes them (one overlay at a time).
+        if (controlsOpen() && (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_BOOKMARK)) {
+            if (event.action == KeyEvent.ACTION_UP) closeControls()
+            return true
+        }
         // ⋮ menu from anywhere: page, home screen, toolbar or an open panel. Holding Menu opens the tab switcher.
         if (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_BOOKMARK) {
             if (down && event.repeatCount == 1 && !menuHeld) { menuHeld = true; showTabsMenu() }
@@ -3642,6 +3658,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         // Toolbar / overlays / bottom bar: plain TV focus navigation.
         if (!pageActive()) {
             if (settingsPanel.visibility == View.VISIBLE && down && settingsKey(f, event.keyCode)) return true
+            if (controlsOpen() && down && trapFocus(controls!!, f, event.keyCode)) return true
             // ▼ from the address field goes into its suggestions, not to the page.
             if (suggestOpen() && f === urlField && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
                 if (down) suggestPanel.findViewWithTag<View>("sug:0")?.requestFocus()
@@ -3968,6 +3985,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         cursor.showRing(null)
         cursor.visibility = View.INVISIBLE
         hideBar()
+        applySpeed()
         showDock()
     }
 
@@ -3986,6 +4004,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun exitWatch(silent: Boolean = false) {
         if (!watching) return
         watching = false
+        closeControls()
         webView.evaluateJavascript("window.__sp && __sp.clear()", null)
         cursor.showRing(null)
         if (!silent) watchDismissedFor = webView.url
@@ -3994,16 +4013,18 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (!silent && jumpMode) jump("none")
     }
 
-    /** Keys while watching. Vertical feeds (Shorts, TikTok): ▲▼ = previous/next. ◀▶ seek, OK pause. */
+    private var okHeld = false
+
+    /** Keys while watching. Vertical feeds (Shorts, TikTok): ▲▼ = previous/next. ◀▶ seek, OK pause, hold OK = controls. */
     private fun handleWatchKey(e: KeyEvent): Boolean {
         val down = e.action == KeyEvent.ACTION_DOWN
         when (e.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                 if (!watchVertical) {
-                    // Normal video: ▼ = full screen, ▲ = leave full screen / back to browsing the page.
+                    // Normal video: ▼ = full screen, ▲ = playback controls (Back leaves full screen / watch mode).
                     if (down && e.repeatCount == 0) {
                         if (e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) { if (!theater) toggleTheater() else showDock() }
-                        else if (theater) toggleTheater() else exitWatch()
+                        else openControls()
                     }
                     return true
                 }
@@ -4026,7 +4047,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
         }
         if (isOk(e.keyCode)) {
-            if (down && e.repeatCount == 0) togglePlay()
+            // Pause / play on release, so holding OK can open the controls instead (▲ is "previous" in feeds).
+            when {
+                down && e.repeatCount == 0 -> okHeld = false
+                down && e.repeatCount == 1 -> { okHeld = true; openControls() }
+                !down && !okHeld -> togglePlay()
+            }
             return true
         }
         return false
@@ -4052,9 +4078,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun togglePlay() {
         webView.evaluateJavascript("window.__sp ? __sp.toggle() : null") { res ->
             when (res?.trim('"')) {
-                "paused" -> flash("❚❚")
-                "playing" -> flash("▶")
+                "paused" -> { flash("❚❚"); ctlPlaying = false }
+                "playing" -> { flash("▶"); ctlPlaying = true }
             }
+            if (controlsOpen()) renderControls()
         }
         if (watching) showDock()
     }
@@ -4064,10 +4091,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun showDock() {
         val dock = findViewById<LinearLayout>(R.id.watchDock)
         dock.removeAllViews()
+        if (controlsOpen()) return
         val hints = buildList {
-            if (watchVertical) { add("▲" to "Previous"); add("▼" to "Next") }
-            else if (theater) add("▲" to "Exit full screen") else add("▼" to "Full screen")
+            if (watchVertical) add("▲ ▼" to "Previous / next")
+            else { if (!theater) add("▼" to "Full screen"); add("▲" to "Controls") }
             add("◀ ▶" to "10s"); add("OK" to "Pause / play")
+            if (watchVertical) add("Hold OK" to "Controls")
             add("Back" to (if (theater) "Exit full screen" else "Browse page"))
         }
         hints.forEach { (key, label) ->
@@ -4110,9 +4139,216 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }.start()
     }
 
+    // ---- Playback controls (watch mode): speed per site, ±10 s, sleep timer (pure parts in PlaybackSpeed) ----
+
+    /** Private browsing keeps its speed changes here only, so no visited host is written to Prefs. */
+    private val privateSpeed = HashMap<String, Double>()
+
+    private fun speedFor(url: String?): Double {
+        val host = url?.let { Uri.parse(it).host }
+        if (inPrivate) PageZoom.hostKey(host)?.let { privateSpeed[it] }?.let { return it }
+        return PlaybackSpeed.speedFor(host, prefs.siteSpeed)
+    }
+
+    /** Tells the page the site's speed; the page applies it to each video as it starts (1× pages are left alone). */
+    private fun applySpeed(view: WebView = webView, url: String? = view.url) {
+        val s = speedFor(url)
+        if (s != PlaybackSpeed.DEFAULT) view.evaluateJavascript(PlaybackSpeed.script(s), null)
+    }
+
+    /** Applies at once and is remembered for this site (in memory only while private). */
+    private fun setSpeed(v: Double) {
+        val s = PlaybackSpeed.snap(v)
+        val host = webView.url?.let { Uri.parse(it).host }
+        PageZoom.hostKey(host)?.let { key ->
+            if (inPrivate) privateSpeed[key] = s else prefs.siteSpeed = PlaybackSpeed.withSpeed(prefs.siteSpeed, host, s)
+        }
+        ctlSpeed = s
+        webView.evaluateJavascript(PlaybackSpeed.script(s), null)
+        flash(PlaybackSpeed.label(s))
+        if (controlsOpen()) renderControls()
+    }
+
+    // Sleep timer: one Handler post, not a loop, so it also fires while the native player is in front.
+    private val sleepHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var sleepMode = PlaybackSpeed.SLEEP_OFF
+    private var sleepAt = 0L
+    private val sleepFire = Runnable { sleepNow() }
+    private val sleepEndCheck = Runnable { checkSleepEnd() }
+
+    private fun sleepLeftMs() = if (sleepMode > 0) (sleepAt - SystemClock.uptimeMillis()).coerceAtLeast(0) else 0L
+
+    private fun setSleep(m: Int) {
+        sleepHandler.removeCallbacks(sleepFire)
+        sleepHandler.removeCallbacks(sleepEndCheck)
+        if (sleepMode == PlaybackSpeed.SLEEP_END && m != PlaybackSpeed.SLEEP_END)
+            webView.evaluateJavascript("window.__sp && __sp.sleepEnd && __sp.sleepEnd(false)", null)
+        sleepMode = m
+        PlayerActivity.sleepAtEnd = m == PlaybackSpeed.SLEEP_END
+        when {
+            m > 0 -> { sleepAt = SystemClock.uptimeMillis() + m * 60_000L; sleepHandler.postDelayed(sleepFire, m * 60_000L) }
+            m == PlaybackSpeed.SLEEP_END -> checkSleepEnd()
+        }
+        if (controlsOpen()) renderControls()
+    }
+
+    /**
+     * "End of video": the page pauses itself just before the end (see __sp.sleepEnd); this only re-arms it
+     * after navigations and learns that it fired. Checks are timed to the video's remaining time (2–30 s apart).
+     */
+    private fun checkSleepEnd() {
+        if (sleepMode != PlaybackSpeed.SLEEP_END) return
+        // The native player reached its end first and used the timer up.
+        if (!PlayerActivity.sleepAtEnd) { sleepDone(); return }
+        webView.evaluateJavascript("window.__sp && __sp.sleepEnd ? __sp.sleepEnd(true) : null") { res ->
+            if (sleepMode != PlaybackSpeed.SLEEP_END) return@evaluateJavascript
+            val o = parseJs(res)
+            if (o?.optBoolean("fired") == true) { sleepDone(); return@evaluateJavascript }
+            val left = o?.optDouble("left", -1.0) ?: -1.0
+            sleepHandler.postDelayed(sleepEndCheck, if (left > 0) ((left - 1) * 1000).toLong().coerceIn(2_000, 30_000) else 5_000)
+        }
+    }
+
+    /** Timed sleep: pause every tab's media and the native player; mkTV stays open. */
+    private fun sleepNow() {
+        tabs.mapNotNull { it.webView }.forEach { it.evaluateJavascript("window.__sp && __sp.pause && __sp.pause()", null) }
+        PlayerActivity.pauseForSleep()
+        sleepDone()
+    }
+
+    private fun sleepDone() {
+        sleepHandler.removeCallbacks(sleepFire)
+        sleepHandler.removeCallbacks(sleepEndCheck)
+        sleepMode = PlaybackSpeed.SLEEP_OFF
+        PlayerActivity.sleepAtEnd = false
+        ctlPlaying = false
+        // Let the TV's own screen saver / sleep take over; the next key press keeps the screen on again.
+        root.keepScreenOn = false
+        showSnack(R.drawable.ic_bedtime, "Sleep timer: paused", "Play") { togglePlay() }
+        if (controlsOpen()) renderControls()
+    }
+
+    private var controls: LinearLayout? = null
+    private var ctlSpeed = PlaybackSpeed.DEFAULT
+    private var ctlPlaying = true
+    /** Live streams have no end, so "End of video" is offered only for videos with a duration. */
+    private var ctlLive = false
+    private var ctlSleepTitle: TextView? = null
+
+    private fun controlsOpen() = controls?.visibility == View.VISIBLE
+
+    /** ▲ (or hold OK) in watch mode: a small panel over the video. Changes apply at once; Back closes it. */
+    private fun openControls() {
+        if (controlsOpen()) return
+        webView.evaluateJavascript("window.__sp ? __sp.status() : null") { res ->
+            if (!watching || controlsOpen()) return@evaluateJavascript
+            val o = parseJs(res)?.takeIf { it.optBoolean("has") }
+            ctlSpeed = PlaybackSpeed.snap(o?.optDouble("speed", speedFor(webView.url)) ?: speedFor(webView.url))
+            ctlPlaying = o?.optBoolean("playing", true) ?: true
+            ctlLive = o != null && o.optDouble("d", 0.0) <= 0
+            hideDock()
+            val panel = controls ?: LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundResource(R.drawable.panel_bg)
+                elevation = dp(20).toFloat() // above the page's own full-screen view (and the dock)
+                setPadding(dp(20), dp(14), dp(20), dp(16))
+                isClickable = true // touches on the panel don't fall through to the page
+                root.addView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(36) })
+                controls = this
+            }
+            panel.visibility = View.VISIBLE
+            renderControls()
+            onOverlayChanged(panel.findViewWithTag("ctl:play"))
+            root.removeCallbacks(controlsTick)
+            root.postDelayed(controlsTick, 1000)
+        }
+    }
+
+    private fun closeControls() {
+        val panel = controls ?: return
+        if (panel.visibility != View.VISIBLE) return
+        root.removeCallbacks(controlsTick)
+        panel.visibility = View.GONE
+        onOverlayChanged(null)
+    }
+
+    /** Remaining sleep time, once a second, only while the panel is open. */
+    private val controlsTick = object : Runnable {
+        override fun run() {
+            if (!controlsOpen()) return
+            if (sleepMode > 0) ctlSleepTitle?.text = sleepTitle()
+            root.postDelayed(this, 1000)
+        }
+    }
+
+    private fun sleepTitle() = when (sleepMode) {
+        PlaybackSpeed.SLEEP_OFF -> "Sleep timer · Off"
+        PlaybackSpeed.SLEEP_END -> "Sleep timer · pauses at the end of this video"
+        else -> "Sleep timer · ${PlaybackSpeed.remaining(sleepLeftMs())} left"
+    }
+
+    /** Rebuilds the panel in place, keeping focus on the same button. */
+    private fun renderControls() {
+        val panel = controls ?: return
+        val focusTag = currentFocus?.takeIf { isInside(panel, it) }?.tag
+        panel.removeAllViews()
+        fun heading(t: String) = TextView(this).apply {
+            text = t; setTextColor(0xFFD1D5DB.toInt()); textSize = 14f
+            setPadding(dp(4), dp(12), 0, dp(6))
+        }
+        fun chip(icon: Int, label: String, tag: String, on: Boolean, enabled: Boolean = true, onClick: () -> Unit) = TextView(this).apply {
+            text = iconText(icon, label, 20)
+            this.tag = tag
+            gravity = android.view.Gravity.CENTER
+            setTextColor(if (on) android.graphics.Color.WHITE else 0xFFD1D5DB.toInt()); textSize = 15f
+            setTypeface(typeface, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            setBackgroundResource(if (on) R.drawable.seg_on else R.drawable.seg_off)
+            setPadding(dp(14), 0, dp(14), 0)
+            alpha = if (enabled) 1f else 0.4f
+            isFocusable = enabled; isClickable = enabled
+            if (enabled) setOnClickListener { onClick() }
+        }
+        fun row(views: List<View>) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            views.forEachIndexed { i, v -> addView(v, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { if (i > 0) marginStart = dp(8) }) }
+        }
+
+        panel.addView(row(listOf(
+            chip(R.drawable.ic_replay, "−10 s", "ctl:back", false) { webView.evaluateJavascript("window.__sp && __sp.seek(-10)", null); flash("⟲ 10") },
+            chip(if (ctlPlaying) R.drawable.ic_pause else R.drawable.ic_play, if (ctlPlaying) "Pause" else "Play", "ctl:play", false) { togglePlay() },
+            chip(R.drawable.ic_forward_step, "+10 s", "ctl:fwd", false) { webView.evaluateJavascript("window.__sp && __sp.seek(10)", null); flash("10 ⟳") },
+        )))
+        panel.addView(heading("Speed · ${PlaybackSpeed.label(ctlSpeed)}"))
+        panel.addView(row(PlaybackSpeed.LEVELS.map { v ->
+            val icon = when { v < 1.0 -> R.drawable.ic_speed_slow; v > 1.0 -> R.drawable.ic_speed_fast; else -> R.drawable.ic_speed }
+            chip(icon, PlaybackSpeed.label(v), "ctl:speed:$v", v == ctlSpeed) { setSpeed(v) }
+        }))
+        panel.addView(heading(sleepTitle()).also { ctlSleepTitle = it })
+        panel.addView(row(PlaybackSpeed.SLEEP.map { m ->
+            val icon = when (m) { PlaybackSpeed.SLEEP_OFF -> R.drawable.ic_close; PlaybackSpeed.SLEEP_END -> R.drawable.ic_video_end; else -> R.drawable.ic_timer }
+            chip(icon, PlaybackSpeed.sleepLabel(m), "ctl:sleep:$m", m == sleepMode,
+                enabled = m != PlaybackSpeed.SLEEP_END || !ctlLive || sleepMode == m) { setSleep(m) }
+        }))
+        if (focusTag != null) panel.findViewWithTag<View>(focusTag)?.takeIf { it.isFocusable }?.requestFocus()
+    }
+
+    /** Keeps the D-pad inside [panel]: a move that would leave it is swallowed. */
+    private fun trapFocus(panel: ViewGroup, f: View?, code: Int): Boolean {
+        val dir = when (code) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> View.FOCUS_LEFT; KeyEvent.KEYCODE_DPAD_RIGHT -> View.FOCUS_RIGHT
+            KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP; KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN
+            else -> return false
+        }
+        if (f == null || !isInside(panel, f)) { panel.findViewWithTag<View>("ctl:play")?.requestFocus(); return true }
+        val next = f.focusSearch(dir)
+        return next == null || !isInside(panel, next)
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            controlsOpen() -> closeControls()
             customView != null -> exitFullscreen(notifyPage = true)
             filling && !overlayOpen() -> exitFill()
             suggestOpen() && isInside(suggestPanel, currentFocus) -> urlField.requestFocus()
@@ -4193,6 +4429,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         shownAt = SystemClock.uptimeMillis(); okDown.clear()
         super.onResume()
         webView.onResume()
+        root.keepScreenOn = true // the sleep timer may have let it go
         hideSystemBars()
         blocker.load() // builds the lists once, then refreshes any over a day old; cheap otherwise
     }
@@ -4220,6 +4457,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     override fun onDestroy() {
+        sleepHandler.removeCallbacksAndMessages(null)
+        PlayerActivity.sleepAtEnd = false
         remoteServer.stop()
         tabs.forEach { destroyTab(it) }
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }

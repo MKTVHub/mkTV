@@ -38,6 +38,36 @@ class RemoteInputTest {
         assertNull(RemoteInput.seekTo(1e12))
     }
 
+    @Test fun mediaActions() {
+        val nan = Double.NaN
+        assertEquals(93.0, RemoteInput.mediaValue("seek", 93.0, nan)!!, 0.0)
+        assertNull(RemoteInput.mediaValue("seek", -5.0, nan))
+        assertEquals(0.0, RemoteInput.mediaValue("fullscreen", 0.0, nan)!!, 0.0)
+        assertEquals(0.0, RemoteInput.mediaValue("captions", 0.0, nan)!!, 0.0)
+        assertNull(RemoteInput.mediaValue("eject", 0.0, 1.0))
+        assertNull(RemoteInput.mediaValue(null, 0.0, 1.0))
+        assertNull(RemoteInput.mediaValue("", 0.0, 1.0))
+    }
+
+    @Test fun mediaSpeedAllowlist() {
+        listOf(0.75, 1.0, 1.25, 1.5, 2.0).forEach { assertEquals(it, RemoteInput.mediaValue("speed", 0.0, it)!!, 0.0) }
+        assertNull(RemoteInput.mediaValue("speed", 0.0, Double.NaN)) // no value sent
+        assertNull(RemoteInput.mediaValue("speed", 0.0, 1.1))
+        assertNull(RemoteInput.mediaValue("speed", 0.0, 16.0))
+        assertNull(RemoteInput.mediaValue("speed", 0.0, -1.0))
+        assertNull(RemoteInput.mediaValue("speed", 0.0, 0.0))
+        assertNull(RemoteInput.mediaValue("speed", 0.0, Double.POSITIVE_INFINITY))
+    }
+
+    @Test fun mediaSleepAllowlist() {
+        listOf(0, 15, 30, 60, -1).forEach { assertEquals(it.toDouble(), RemoteInput.mediaValue("sleep", 0.0, it.toDouble())!!, 0.0) }
+        assertNull(RemoteInput.mediaValue("sleep", 0.0, Double.NaN))
+        assertNull(RemoteInput.mediaValue("sleep", 0.0, 45.0))
+        assertNull(RemoteInput.mediaValue("sleep", 0.0, 15.5))
+        assertNull(RemoteInput.mediaValue("sleep", 0.0, -2.0))
+        assertNull(RemoteInput.mediaValue("sleep", 0.0, 1e12))
+    }
+
     @Test fun openable() {
         assertTrue(RemoteInput.openable("https://example.com/"))
         assertTrue(RemoteInput.openable("HTTP://example.com"))
