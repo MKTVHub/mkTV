@@ -23,7 +23,7 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway**. Pause blocking for one site from the shield.
 - **YouTube ad removal** using the same technique as uBlock Origin and Brave.
 - **Private browsing.** A separate session that is deleted when you close it. Tracking codes are stripped from links and Global Privacy Control is on.
-- **Phone remote** *(in progress).* Scan a QR code and use your phone's browser as a remote and keyboard.
+- **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video, volume and page scroll.
 
 Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 

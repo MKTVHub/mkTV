@@ -220,10 +220,10 @@ Settings save as you change them. Closing Settings reloads the page if anything 
 - **Open a URL from another app or adb:** an intent with a data URI loads it.
 - **Exit:** Back on the first page asks "Press Back again to exit".
 
-## Phone remote (in progress)
+## Phone remote
 
-**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad, OK, Back, Home, Menu, play/pause, seek ±10 s, previous/next, a text box that types into the focused field, and "open URL". No app install on the phone.
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing seek bar while a video plays, and "open URL". No app install on the phone.
 
-**Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `state`). Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
+**Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `onMove`, `onMedia`, `state`, `home`), `RemoteInput.kt`. Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
 
 **Limits.** Plain HTTP on the local network. In the current build the server keeps running until the app is closed, and the token stays the same for that app run.

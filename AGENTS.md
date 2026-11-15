@@ -40,6 +40,7 @@ app/src/main/
     Prefs.kt              SharedPreferences wrapper: every user setting, favourites, recents, history, counters, update state
     PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page
     RemoteServer.kt       Phone remote: tiny LAN HTTP server with a pairing token (see docs/PHONE_REMOTE.md)
+    RemoteInput.kt        Pure: phone remote request validation (keys, lengths, ranges, URL scheme, icon host)
   assets/
     page_script.js        Injected into every page: cosmetic ad CSS, click-trap removal, GPC, jump-mode engine (window.__sp), watch-mode video helpers, auto-unmute
     yt_clean.js           Injected on YouTube origins only: JSON ad pruning, ad-slot CSS, ad skip
@@ -47,7 +48,7 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, WebSearchTest, HistoryTest, UpdatesTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):

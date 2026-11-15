@@ -22,9 +22,16 @@ class RemoteServer(private val context: Context, private val listener: Listener,
 
     interface Listener {
         fun onKey(key: String, action: String)
-        fun onText(text: String, enter: Boolean)
+        /** Live typing: press Backspace [deletes] times (or clear the field), then type [text]. */
+        fun onText(text: String, deletes: Int, clear: Boolean, enter: Boolean)
         fun onOpen(url: String)
+        /** Touchpad drag in pointer mode, in phone CSS px. */
+        fun onMove(dx: Double, dy: Double)
+        fun onMedia(action: String, value: Double)
         fun state(): JSONObject
+        fun home(): JSONObject
+        /** The TV's saved favicon (PNG) for [host], already validated by [RemoteInput.iconHost]. */
+        fun icon(host: String): ByteArray?
         fun onPhoneConnected()
     }
 
@@ -102,31 +109,58 @@ class RemoteServer(private val context: Context, private val listener: Listener,
 
         val authed = sameToken(query["t"]) || sameToken(headers["x-token"])
         val out = sock.getOutputStream()
-        fun respond(code: Int, type: String, text: String) {
-            val bytes = text.toByteArray(Charsets.UTF_8)
-            val status = when (code) { 200 -> "OK"; 403 -> "Forbidden"; 404 -> "Not Found"; else -> "Error" }
-            out.write(("HTTP/1.1 $code $status\r\nContent-Type: $type; charset=utf-8\r\nContent-Length: ${bytes.size}\r\n" +
-                "Cache-Control: no-store\r\nConnection: close\r\n\r\n").toByteArray())
+        fun respond(code: Int, type: String, bytes: ByteArray) {
+            val status = when (code) { 200 -> "OK"; 400 -> "Bad Request"; 403 -> "Forbidden"; 404 -> "Not Found"; 415 -> "Unsupported Media Type"; else -> "Error" }
+            out.write(("HTTP/1.1 $code $status\r\nContent-Type: $type\r\nContent-Length: ${bytes.size}\r\n" +
+                "Cache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n").toByteArray())
             out.write(bytes)
             out.flush()
         }
+        fun respond(code: Int, type: String, text: String) = respond(code, "$type; charset=utf-8", text.toByteArray(Charsets.UTF_8))
+        val ok = "{\"ok\":true}"
         if (!authed) {
             respond(403, "text/html", "<h2 style='font-family:sans-serif'>Scan the QR code shown on your TV (⋮ → Phone remote).</h2>")
             return
         }
         if (!announced) { announced = true; listener.onPhoneConnected() }
+        // JSON-only POSTs: a cross-site HTML form can't send this content type without a CORS preflight.
+        if (method == "POST" && headers["content-type"]?.substringBefore(';')?.trim()?.lowercase() != "application/json") {
+            respond(415, "application/json", "{\"ok\":false}")
+            return
+        }
         val json = runCatching { if (body.isNotBlank()) JSONObject(body) else JSONObject() }.getOrDefault(JSONObject())
         when {
             method == "GET" && (path == "/" || path == "/index.html") -> respond(200, "text/html", page)
             method == "GET" && path == "/api/state" -> respond(200, "application/json", listener.state().toString())
+            method == "GET" && path == "/api/home" -> respond(200, "application/json", listener.home().toString())
+            method == "GET" && path == "/api/icon" -> {
+                val png = RemoteInput.iconHost(query["h"])?.let { listener.icon(it) }
+                if (png == null) respond(404, "application/json", "{\"ok\":false}") else respond(200, "image/png", png)
+            }
             method == "POST" && path == "/api/key" -> {
-                listener.onKey(json.optString("key"), json.optString("action", "press")); respond(200, "application/json", "{\"ok\":true}")
+                val key = RemoteInput.key(json.optString("key"))
+                if (key == null) respond(400, "application/json", "{\"ok\":false}")
+                else { listener.onKey(key, RemoteInput.action(json.optString("action"))); respond(200, "application/json", ok) }
             }
             method == "POST" && path == "/api/text" -> {
-                listener.onText(json.optString("text"), json.optBoolean("enter")); respond(200, "application/json", "{\"ok\":true}")
+                listener.onText(RemoteInput.text(json.optString("text")), RemoteInput.deletes(json.optInt("del")),
+                    json.optBoolean("clear"), json.optBoolean("enter"))
+                respond(200, "application/json", ok)
             }
             method == "POST" && path == "/api/open" -> {
-                listener.onOpen(json.optString("url")); respond(200, "application/json", "{\"ok\":true}")
+                val url = json.optString("url").trim()
+                if (url.isEmpty() || url.length > RemoteInput.MAX_URL) respond(400, "application/json", "{\"ok\":false}")
+                else { listener.onOpen(url); respond(200, "application/json", ok) }
+            }
+            method == "POST" && path == "/api/move" -> {
+                listener.onMove(RemoteInput.move(json.optDouble("dx", 0.0)), RemoteInput.move(json.optDouble("dy", 0.0)))
+                respond(200, "application/json", ok)
+            }
+            method == "POST" && path == "/api/media" -> {
+                val action = json.optString("action").takeIf { it in RemoteInput.MEDIA }
+                val to = RemoteInput.seekTo(json.optDouble("to", 0.0))
+                if (action == null || (action == "seek" && to == null)) respond(400, "application/json", "{\"ok\":false}")
+                else { listener.onMedia(action, to ?: 0.0); respond(200, "application/json", ok) }
             }
             else -> respond(404, "application/json", "{\"ok\":false}")
         }

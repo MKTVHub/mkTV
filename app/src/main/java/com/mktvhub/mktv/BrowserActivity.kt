@@ -2035,12 +2035,21 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     override fun onKey(key: String, action: String) = runOnUiThread {
         if (key == "home") { if (action != "up") { closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
+        // Apps can't inject volume keys; adjust the media stream directly (FLAG_SHOW_UI shows the TV's own volume bar).
+        if (key == "volup" || key == "voldown" || key == "mute") {
+            if (action != "up") (getSystemService(AUDIO_SERVICE) as android.media.AudioManager).adjustStreamVolume(
+                android.media.AudioManager.STREAM_MUSIC,
+                when (key) { "volup" -> android.media.AudioManager.ADJUST_RAISE; "voldown" -> android.media.AudioManager.ADJUST_LOWER; else -> android.media.AudioManager.ADJUST_TOGGLE_MUTE },
+                android.media.AudioManager.FLAG_SHOW_UI)
+            return@runOnUiThread
+        }
         val code = when (key) {
             "up" -> KeyEvent.KEYCODE_DPAD_UP; "down" -> KeyEvent.KEYCODE_DPAD_DOWN
             "left" -> KeyEvent.KEYCODE_DPAD_LEFT; "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
             "ok" -> KeyEvent.KEYCODE_DPAD_CENTER; "back" -> KeyEvent.KEYCODE_BACK; "menu" -> KeyEvent.KEYCODE_MENU
             "playpause" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE; "ff" -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
             "rew" -> KeyEvent.KEYCODE_MEDIA_REWIND; "next" -> KeyEvent.KEYCODE_MEDIA_NEXT; "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
+            "pageup" -> KeyEvent.KEYCODE_PAGE_UP; "pagedown" -> KeyEvent.KEYCODE_PAGE_DOWN
             else -> return@runOnUiThread
         }
         val now = SystemClock.uptimeMillis()
@@ -2072,31 +2081,98 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
-    /** Types into whatever has focus: an app text field, or the web page (inputs, YouTube TV search, ...). */
-    override fun onText(text: String, enter: Boolean) = runOnUiThread {
+    /**
+     * Types into whatever has focus: an app text field, or the web page (inputs, YouTube TV search, ...).
+     * Live typing sends only the change: Backspace [deletes] times, then the new characters.
+     */
+    override fun onText(text: String, deletes: Int, clear: Boolean, enter: Boolean) = runOnUiThread {
         val target: View = currentFocus ?: webView
-        val events = android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
-        if (events != null) events.forEach { target.dispatchKeyEvent(it) }
-        else (target as? EditText)?.append(text)
-        if (enter) {
-            target.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
-            target.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+        fun press(code: Int, meta: Int = 0) {
+            val t = SystemClock.uptimeMillis()
+            target.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0, meta))
+            target.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0, meta))
         }
+        if (clear && target is EditText) target.setText("")
+        else {
+            // Select-all + delete empties a page's input; the Backspaces cover fields that ignore Ctrl+A (TV-style search boxes).
+            if (clear) { press(KeyEvent.KEYCODE_A, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON); press(KeyEvent.KEYCODE_DEL) }
+            repeat(deletes) { press(KeyEvent.KEYCODE_DEL) }
+        }
+        if (text.isNotEmpty()) {
+            val events = android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD).getEvents(text.toCharArray())
+            if (events != null) events.forEach { target.dispatchKeyEvent(it) }
+            else if (target is EditText) target.append(text)
+            // Accents, emoji and other scripts have no key events: insert them into the page's focused field.
+            else webView.evaluateJavascript("document.execCommand('insertText', false, ${org.json.JSONObject.quote(text)})", null)
+        }
+        if (enter) press(KeyEvent.KEYCODE_ENTER)
     }
 
     override fun onOpen(url: String) = runOnUiThread {
         if (url.isBlank()) return@runOnUiThread
+        val target = normalizeInput(url)
+        if (!RemoteInput.openable(target)) { note("The phone can only open web pages"); return@runOnUiThread }
         closeMenu(); closePhoneRemote(); closeShortcuts()
-        load(normalizeInput(url))
+        load(target)
+    }
+
+    /** Where arrows would move the pointer, a touchpad drag moves it too; elsewhere the phone sends arrow keys. */
+    private fun pointerActive() = !jumpMode && pageActive() && !siteRemote && !watching && customView == null
+
+    override fun onMove(dx: Double, dy: Double) = runOnUiThread {
+        if (!pointerActive()) return@runOnUiThread
+        // Phone px are tiny next to a TV: about 1.8 dp of pointer per px of finger crosses the screen in two swipes.
+        val gain = 1.8f * resources.displayMetrics.density
+        cursor.moveBy(dx.toFloat() * gain, dy.toFloat() * gain)
+    }
+
+    override fun onMedia(action: String, value: Double) = runOnUiThread {
+        when (action) {
+            "seek" -> webView.evaluateJavascript("window.__sp && __sp.seekTo($value)", null)
+            "fullscreen" -> toggleTheater()
+            "captions" -> webView.evaluateJavascript("window.__sp ? __sp.captions() : null") { r ->
+                when (r?.trim('"')) { "on" -> flash("CC"); "off" -> flash("CC off") }
+            }
+        }
     }
 
     override fun state(): org.json.JSONObject {
         val latch = java.util.concurrent.CountDownLatch(1)
-        val o = org.json.JSONObject()
-        runOnUiThread { o.put("title", webView.title ?: "mkTV").put("url", webView.url ?: ""); latch.countDown() }
+        val base = java.util.concurrent.atomic.AtomicReference<org.json.JSONObject>()
+        val media = java.util.concurrent.atomic.AtomicReference<String?>()
+        runOnUiThread {
+            base.set(org.json.JSONObject().put("title", webView.title ?: "mkTV").put("url", webView.url ?: "")
+                .put("nav", prefs.navMode).put("pointer", pointerActive()))
+            if (!hasPage()) latch.countDown()
+            else webView.evaluateJavascript("window.__sp ? __sp.status() : null") { r -> media.set(r); latch.countDown() }
+        }
         latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+        val o = base.get() ?: org.json.JSONObject().put("title", "mkTV")
+        parseJs(media.get())?.takeIf { it.optBoolean("has") }?.let { o.put("media", it) }
         return o
     }
+
+    /** Home lists for the phone, as on the TV's Home screen. Never Recent while private browsing. */
+    override fun home(): org.json.JSONObject {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val priv = java.util.concurrent.atomic.AtomicBoolean(true)
+        runOnUiThread { priv.set(inPrivate); latch.countDown() }
+        latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+        val hidden = prefs.hiddenSections
+        val favs = if ("fav" in hidden) emptyList() else prefs.shortcuts
+        val recent = if (priv.get() || "rec" in hidden) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
+        fun tiles(list: List<Pair<String, String>>) = RemoteInput.tiles(list.map { (title, url) ->
+            val host = Uri.parse(url).host
+            RemoteInput.tile(title, url, host, faviconFile(host)?.exists() == true)
+        })
+        return org.json.JSONObject()
+            .put("popular", tiles(if ("pop" in hidden) emptyList() else prefs.popular))
+            .put("favourites", tiles(favs))
+            .put("recent", tiles(recent))
+    }
+
+    override fun icon(host: String): ByteArray? =
+        faviconFile(host)?.takeIf { it.isFile && it.length() in 1..512_000 }?.readBytes()
 
     override fun onPhoneConnected() = runOnUiThread {
         closePhoneRemote()

@@ -333,6 +333,35 @@
       return String(Math.round(v.currentTime));
     },
     feed: feed,
+    // Phone remote "Now playing": position, duration (0 for live streams) and caption tracks.
+    status: function () {
+      var v = mainVideo();
+      if (!v) return JSON.stringify({ has: false });
+      var tr = v.textTracks || [], cc = 0, on = false;
+      for (var i = 0; i < tr.length; i++) {
+        if (tr[i].kind !== 'subtitles' && tr[i].kind !== 'captions') continue;
+        cc++; if (tr[i].mode === 'showing') on = true;
+      }
+      return JSON.stringify({ has: true, playing: !v.paused && !v.ended, t: v.currentTime || 0,
+        d: isFinite(v.duration) ? v.duration : 0, cc: cc > 0, ccOn: on, fs: !!document.fullscreenElement });
+    },
+    seekTo: function (t) {
+      var v = mainVideo(); if (!v || !isFinite(v.duration)) return null;
+      v.currentTime = Math.max(0, Math.min(t, v.duration));
+      return String(Math.round(v.currentTime));
+    },
+    // Generic <track> captions only: toggles the first subtitles/captions track.
+    captions: function () {
+      var v = mainVideo(); if (!v || !v.textTracks) return null;
+      var tr = v.textTracks, first = null, on = false;
+      for (var i = 0; i < tr.length; i++) {
+        if (tr[i].kind !== 'subtitles' && tr[i].kind !== 'captions') continue;
+        if (!first) first = tr[i];
+        if (tr[i].mode === 'showing') { on = true; tr[i].mode = 'hidden'; }
+      }
+      if (!on && first) first.mode = 'showing';
+      return first ? (on ? 'off' : 'on') : null;
+    },
     // Real full screen via the Fullscreen API. Needs a recent user activation, which the app
     // provides by sending a harmless key to the page just before calling this.
     fullscreen: function () {

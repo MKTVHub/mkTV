@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#15121d">
+<meta name="referrer" content="no-referrer">
 <title>mkTV Remote</title>
 <style>
   :root { --bg:#15121d; --card:#221d2e; --key:#2d2640; --key2:#3a3152; --text:#f4f2f8; --muted:#a39db3;
@@ -11,13 +12,19 @@
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   html,body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,system-ui,Roboto,sans-serif; }
   body { padding:16px 18px calc(24px + env(safe-area-inset-bottom)); max-width:460px; margin:0 auto; user-select:none; -webkit-user-select:none; }
+  button { font-family:inherit; cursor:pointer; touch-action:manipulation; }
+  [hidden] { display:none !important; }
   header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
   .logo { width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,var(--accent1),var(--accent2),var(--accent3));
-          display:grid; place-items:center; }
-  h1 { font-size:18px; margin:0; }
-  #now { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; text-align:right; }
+          display:grid; place-items:center; flex:none; }
+  h1 { font-size:18px; margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:0 1 auto; min-width:0; }
+  #now { color:var(--muted); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1 1 0; min-width:0; text-align:right; }
   .dot { width:9px; height:9px; border-radius:50%; background:#10b981; flex:none; }
   .dot.off { background:#ef4444; }
+
+  .seg { display:flex; background:var(--card); border-radius:12px; padding:4px; gap:4px; margin-bottom:6px; }
+  .seg button { flex:1; min-width:0; height:36px; border:0; border-radius:9px; background:none; color:var(--muted); font-size:14px; font-weight:700; }
+  .seg button.on { background:var(--key2); color:var(--text); }
 
   .pad { position:relative; width:min(78vw,300px); aspect-ratio:1; margin:8px auto 18px; border-radius:50%;
          background:radial-gradient(circle at 50% 40%, var(--key2), var(--key)); box-shadow:0 10px 30px #0008, inset 0 1px 0 #ffffff14; }
@@ -28,21 +35,66 @@
   .pad .right { right:0; top:30%; width:30%; height:40%; }
   .pad .ok    { left:31%; top:31%; width:38%; height:38%; border-radius:50%;
                 background:linear-gradient(135deg,var(--accent1),var(--accent2)); font-size:18px; font-weight:800; box-shadow:0 4px 18px #db277766; }
-  .pad button:active, .row button:active { transform:scale(.94); filter:brightness(1.25); }
+  .pad button:active, .row button:active, .tile:active, .np-row button:active { transform:scale(.94); filter:brightness(1.25); }
 
-  .row { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:10px; }
-  .row.media { grid-template-columns:repeat(5,1fr); }
+  .touch { position:relative; height:min(78vw,320px); margin:8px 0 18px; border-radius:22px; touch-action:none; cursor:crosshair;
+           background:radial-gradient(circle at 50% 35%, var(--key2), var(--key)); box-shadow:0 10px 30px #0008, inset 0 1px 0 #ffffff14;
+           display:flex; align-items:flex-end; justify-content:center; padding:14px; }
+  .touch.active { filter:brightness(1.12); }
+  .touch span { color:var(--muted); font-size:12px; text-align:center; pointer-events:none; }
+
+  .row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+  .row.media, .row.vol { grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
+  .row button, .np-row button { min-width:0; padding:0 2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .row button { height:54px; border-radius:14px; border:0; background:var(--key); color:var(--text); font-size:15px; font-weight:600; }
   .row.media button { font-size:19px; }
+  .row.vol button { font-size:14px; }
 
   .card { background:var(--card); border-radius:16px; padding:12px; margin-top:12px; }
-  .card label { color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; display:block; margin:2px 2px 8px; }
-  .field { display:flex; gap:8px; }
+  .card label, .card .label, summary { color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; display:block; margin:2px 2px 8px; }
+  summary { cursor:pointer; margin:0 2px; list-style:none; }
+  summary::-webkit-details-marker { display:none; }
+  details[open] summary { margin-bottom:8px; }
+  .field { display:flex; gap:8px; min-width:0; }
   .field input { flex:1; min-width:0; height:46px; border-radius:12px; border:1px solid #ffffff1a; background:#120f19; color:var(--text);
                  padding:0 12px; font-size:16px; user-select:text; -webkit-user-select:text; }
-  .field button { height:46px; padding:0 16px; border-radius:12px; border:0; color:white; font-weight:700; font-size:15px;
-                  background:linear-gradient(135deg,var(--accent1),var(--accent2)); }
+  .field button { flex:none; height:46px; padding:0 14px; border-radius:12px; border:0; color:white; font-weight:700; font-size:15px;
+                  background:linear-gradient(135deg,var(--accent1),var(--accent2)); white-space:nowrap; }
+  .field button.plain { background:var(--key); color:var(--muted); padding:0 12px; }
+  .sub { color:var(--muted); font-size:12px; margin:8px 2px 0; }
+
+  .np-title { font-size:14px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin:0 2px 8px; }
+  .np-seek { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .np-seek input { flex:1; min-width:0; accent-color:var(--accent2); height:28px; }
+  .np-row { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-top:8px; }
+  .np-row button { height:46px; border-radius:12px; border:0; background:var(--key); color:var(--text); font-size:16px; font-weight:700; }
+  .np-row button.on { background:linear-gradient(135deg,var(--accent1),var(--accent2)); }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(66px,100%),1fr)); gap:8px; margin-bottom:10px; }
+  .tile { border:0; background:var(--key); border-radius:14px; padding:10px 4px 8px; color:var(--text); display:flex; flex-direction:column;
+          align-items:center; gap:6px; min-width:0; }
+  .tile .ic { width:38px; height:38px; border-radius:10px; display:grid; place-items:center; font-weight:800; font-size:18px; color:#fff; overflow:hidden; }
+  .tile .ic img { width:30px; height:30px; object-fit:contain; }
+  .tile .nm { font-size:11px; width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
   .hint { color:var(--muted); font-size:12px; text-align:center; margin-top:16px; }
+  .main, .controls, .side, .card { min-width:0; }
+
+  /* Small phones (360 px): tighter gutters so five-key rows and the text field keep their labels. */
+  @media (max-width:380px) {
+    body { padding-left:12px; padding-right:12px; }
+    .row.media, .row.vol, .np-row { gap:6px; }
+    .row.vol button { font-size:13px; }
+    .field button { padding:0 10px; }
+  }
+
+  /* Landscape phones, tablets and desktop browsers: controls on the left, the rest on the right. */
+  @media (orientation:landscape) and (min-width:560px), (min-width:760px) {
+    body { max-width:1040px; }
+    .main { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:24px; align-items:start; }
+    .side .card:first-child { margin-top:0; }
+    .pad { width:min(40vw,300px,60vh); }
+    .touch { height:min(60vh,340px); }
+  }
 </style>
 </head>
 <body>
@@ -53,52 +105,103 @@
   <span class="dot" id="dot"></span>
 </header>
 
-<div class="pad">
-  <button class="up" data-key="up" aria-label="Up">▲</button>
-  <button class="left" data-key="left" aria-label="Left">◀</button>
-  <button class="ok" data-key="ok" aria-label="OK">OK</button>
-  <button class="right" data-key="right" aria-label="Right">▶</button>
-  <button class="down" data-key="down" aria-label="Down">▼</button>
-</div>
+<div class="main">
+<div class="controls">
+  <div class="seg" role="tablist">
+    <button id="vButtons" role="tab">Buttons</button>
+    <button id="vTouch" role="tab">Touchpad</button>
+  </div>
 
-<div class="row">
-  <button data-key="back">↩ Back</button>
-  <button data-key="home">⌂ Home</button>
-  <button data-key="menu">⋮ Menu</button>
-</div>
-<div class="row media">
-  <button data-key="prev" aria-label="Previous">⏮︎</button>
-  <button data-key="rew" aria-label="Back 10 seconds">⏪︎</button>
-  <button data-key="playpause" aria-label="Play or pause">⏯︎</button>
-  <button data-key="ff" aria-label="Forward 10 seconds">⏩︎</button>
-  <button data-key="next" aria-label="Next">⏭︎</button>
-</div>
+  <div class="pad" id="pad">
+    <button class="up" data-key="up" aria-label="Up">▲</button>
+    <button class="left" data-key="left" aria-label="Left">◀</button>
+    <button class="ok" data-key="ok" aria-label="OK">OK</button>
+    <button class="right" data-key="right" aria-label="Right">▶</button>
+    <button class="down" data-key="down" aria-label="Down">▼</button>
+  </div>
+  <div class="touch" id="touch" hidden><span id="touchHint"></span></div>
 
-<div class="card">
-  <label for="text">Type on TV</label>
-  <div class="field">
-    <input id="text" placeholder="Search or type into the selected box" autocomplete="off" enterkeyhint="send">
-    <button id="send">Send</button>
+  <div class="row">
+    <button data-key="back">↩ Back</button>
+    <button data-key="home">⌂ Home</button>
+    <button data-key="menu">⋮ Menu</button>
+  </div>
+  <div class="row media">
+    <button data-key="prev" aria-label="Previous">⏮︎</button>
+    <button data-key="rew" aria-label="Back 10 seconds">⏪︎</button>
+    <button data-key="playpause" aria-label="Play or pause">⏯︎</button>
+    <button data-key="ff" aria-label="Forward 10 seconds">⏩︎</button>
+    <button data-key="next" aria-label="Next">⏭︎</button>
+  </div>
+  <div class="row vol">
+    <button data-key="voldown" aria-label="Volume down">Vol −</button>
+    <button data-key="mute" aria-label="Mute">Mute</button>
+    <button data-key="volup" aria-label="Volume up">Vol +</button>
+    <button data-key="pageup" aria-label="Page up">Pg ▲</button>
+    <button data-key="pagedown" aria-label="Page down">Pg ▼</button>
   </div>
 </div>
-<div class="card">
-  <label for="url">Open a website</label>
-  <div class="field">
-    <input id="url" type="url" placeholder="youtube.com" autocomplete="off" autocapitalize="off" enterkeyhint="go">
-    <button id="open">Open</button>
+
+<div class="side">
+  <div class="card" id="np" hidden>
+    <div class="label">Now playing</div>
+    <div class="np-title" id="npTitle"></div>
+    <div class="np-seek" id="npSeek">
+      <span id="npT">0:00</span>
+      <input id="npBar" type="range" min="0" max="1" step="1" value="0" aria-label="Seek">
+      <span id="npD">0:00</span>
+    </div>
+    <div class="np-row">
+      <button data-key="rew" aria-label="Back 10 seconds">−10</button>
+      <button data-key="playpause" id="npPlay" aria-label="Play or pause">▶</button>
+      <button data-key="ff" aria-label="Forward 10 seconds">+10</button>
+      <button id="npFull" aria-label="Full screen">⛶</button>
+      <button id="npCc" aria-label="Captions">CC</button>
+    </div>
   </div>
+
+  <div class="card">
+    <label for="text">Type on TV</label>
+    <div class="field">
+      <input id="text" placeholder="Type into the selected box" autocomplete="off" enterkeyhint="send">
+      <button id="clear" class="plain" aria-label="Clear the TV box">✕</button>
+      <button id="enter">↵ Enter</button>
+    </div>
+  </div>
+
+  <div class="card" id="home">
+    <div id="homeLists"></div>
+    <details open>
+      <summary>Open a website ›</summary>
+      <div class="field">
+        <input id="url" type="url" placeholder="youtube.com" autocomplete="off" autocapitalize="off" enterkeyhint="go">
+        <button id="open">Open</button>
+      </div>
+    </details>
+  </div>
+</div>
 </div>
 <p class="hint">Hold an arrow to keep moving. Phone and TV must be on the same Wi-Fi.</p>
 
 <script>
   var token = new URLSearchParams(location.search).get('t') || '';
+  function $(id) { return document.getElementById(id); }
   function api(path, body) {
     return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Token': token }, body: JSON.stringify(body || {}) })
       .then(function (r) { setOnline(r.ok); return r; })
       .catch(function () { setOnline(false); });
   }
-  function setOnline(ok) { document.getElementById('dot').className = ok ? 'dot' : 'dot off'; }
-  function buzz() { if (navigator.vibrate) navigator.vibrate(8); }
+  function getJson(path) {
+    return fetch(path, { headers: { 'X-Token': token } })
+      .then(function (r) { setOnline(r.ok); return r.json(); });
+  }
+  function setOnline(ok) { $('dot').className = ok ? 'dot' : 'dot off'; }
+  function buzz() { if (navigator.vibrate) try { navigator.vibrate(10); } catch (e) {} }
+  // Keys that can open or close an overlay re-check soon whether touchpad drags move the pointer.
+  var CHANGES_VIEW = { ok: 1, back: 1, home: 1, menu: 1 };
+  function press(key) { api('/api/key', { key: key, action: 'press' }); if (CHANGES_VIEW[key]) setTimeout(poll, 400); }
+  var store = { get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
 
   // Arrows support holding (down/up events) so "hold ▼" shortcuts and fast scrolling work; other keys are a press.
   var HOLDABLE = { up: 1, down: 1, left: 1, right: 1, ok: 1, back: 1 };
@@ -106,36 +209,230 @@
     var key = b.getAttribute('data-key'), held = false;
     if (HOLDABLE[key]) {
       b.addEventListener('pointerdown', function (e) { e.preventDefault(); held = true; buzz(); api('/api/key', { key: key, action: 'down' }); });
-      var release = function () { if (!held) return; held = false; api('/api/key', { key: key, action: 'up' }); };
+      var release = function () { if (!held) return; held = false; api('/api/key', { key: key, action: 'up' }); if (CHANGES_VIEW[key]) setTimeout(poll, 400); };
       b.addEventListener('pointerup', release); b.addEventListener('pointerleave', release); b.addEventListener('pointercancel', release);
     } else {
-      b.addEventListener('click', function () { buzz(); api('/api/key', { key: key, action: 'press' }); });
+      b.addEventListener('click', function () {
+        buzz(); press(key);
+        if (key === 'home') setTimeout(loadHome, 800);
+        if (key === 'playpause' || key === 'ff' || key === 'rew') setTimeout(poll, 300);
+      });
     }
   });
 
-  function sendText(enter) {
-    var el = document.getElementById('text');
-    if (!el.value) { if (enter) api('/api/key', { key: 'ok', action: 'press' }); return; }
-    api('/api/text', { text: el.value, enter: !!enter }); el.value = '';
+  // ---- Buttons / Touchpad ----
+  function setView(v) {
+    $('pad').hidden = v === 'touch'; $('touch').hidden = v !== 'touch';
+    $('vButtons').className = v === 'touch' ? '' : 'on'; $('vTouch').className = v === 'touch' ? 'on' : '';
+    store.set('mk.view', v);
   }
-  document.getElementById('send').onclick = function () { sendText(true); };
-  document.getElementById('text').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); sendText(true); } });
+  $('vButtons').onclick = function () { setView('buttons'); };
+  $('vTouch').onclick = function () { setView('touch'); };
+  setView(store.get('mk.view') === 'touch' ? 'touch' : 'buttons');
 
-  function openUrl() {
-    var el = document.getElementById('url');
+  // Swipe = one arrow per STEP px (axis locked per gesture), tap = OK, two-finger tap or long-press = Back.
+  // In pointer mode (state.pointer) a drag moves the TV's pointer instead.
+  var STEP = 60, pointer = false;
+  (function () {
+    var el = $('touch'), pts = {}, count = 0, most = 0, moved = false, longFired = false, longT = null;
+    var sx, sy, ax, ay, lx, ly, lt, axis = null, steps = 0, mx = 0, my = 0, sending = false;
+    function flushMove() {
+      if (sending || (!mx && !my)) return;
+      sending = true;
+      var dx = Math.round(mx * 10) / 10, dy = Math.round(my * 10) / 10; mx = 0; my = 0;
+      api('/api/move', { dx: dx, dy: dy }).then(function () { sending = false; setTimeout(flushMove, 0); });
+    }
+    function hint() {
+      $('touchHint').textContent = pointer ? 'Drag to move the pointer · tap to click · two-finger tap or long-press = Back'
+        : 'Swipe to move · tap = OK · two-finger tap or long-press = Back';
+    }
+    hint(); el.hint = hint;
+    el.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      try { el.setPointerCapture(e.pointerId); } catch (err) {}
+      pts[e.pointerId] = { x: e.clientX, y: e.clientY }; count++; most = Math.max(most, count);
+      el.className = 'touch active';
+      if (count === 1) {
+        sx = ax = lx = e.clientX; sy = ay = ly = e.clientY; lt = e.timeStamp;
+        moved = false; longFired = false; axis = null; steps = 0;
+        clearTimeout(longT);
+        longT = setTimeout(function () { if (!moved && most === 1) { longFired = true; buzz(); press('back'); } }, 550);
+      } else clearTimeout(longT);
+    });
+    el.addEventListener('pointermove', function (e) {
+      var p = pts[e.pointerId]; if (!p) return;
+      var x = e.clientX, y = e.clientY;
+      if (!moved && Math.abs(x - p.x) + Math.abs(y - p.y) > 12) { moved = true; clearTimeout(longT); }
+      if (most > 1 || !moved || longFired) return;
+      if (pointer) {
+        // Faster finger, further pointer: up to 2.5× like a laptop touchpad.
+        var dt = Math.max(1, e.timeStamp - lt), dist = Math.abs(x - lx) + Math.abs(y - ly);
+        var f = 1 + Math.min(1.5, dist / dt * 0.6);
+        mx += (x - lx) * f; my += (y - ly) * f; flushMove();
+      } else {
+        var dx = x - ax, dy = y - ay;
+        if (!axis && (Math.abs(dx) >= STEP || Math.abs(dy) >= STEP)) axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+        while (axis === 'x' && Math.abs(dx) >= STEP) { press(dx > 0 ? 'right' : 'left'); buzz(); steps++; ax += dx > 0 ? STEP : -STEP; dx = x - ax; }
+        while (axis === 'y' && Math.abs(dy) >= STEP) { press(dy > 0 ? 'down' : 'up'); buzz(); steps++; ay += dy > 0 ? STEP : -STEP; dy = y - ay; }
+      }
+      lx = x; ly = y; lt = e.timeStamp;
+    });
+    function end(e) {
+      if (!pts[e.pointerId]) return;
+      delete pts[e.pointerId]; count--;
+      if (count > 0) return;
+      clearTimeout(longT);
+      el.className = 'touch';
+      var g = most; most = 0;
+      if (e.type === 'pointercancel' || longFired) return;
+      var dx = e.clientX - sx, dy = e.clientY - sy;
+      if (g >= 2) { if (!moved) { buzz(); press('back'); } return; }
+      if (!moved) { buzz(); press('ok'); return; }
+      // A short flick that never reached STEP still counts as one arrow.
+      if (!pointer && steps === 0 && Math.max(Math.abs(dx), Math.abs(dy)) > 25) {
+        buzz(); press(Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+      }
+    }
+    el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  })();
+
+  // ---- Live typing: sends only what changed (Backspaces + new text), one request at a time so order holds. ----
+  (function () {
+    var box = $('text'), sent = '', busy = false, again = false, wantEnter = false, wantClear = false, timer = null;
+    function flush() {
+      clearTimeout(timer);
+      if (busy) { again = true; return; }
+      var v = box.value.slice(0, 1000), enter = wantEnter, clear = wantClear;
+      wantEnter = false; wantClear = false;
+      var p = 0;
+      while (p < v.length && p < sent.length && v.charAt(p) === sent.charAt(p)) p++;
+      var del = clear ? sent.length : sent.length - p, add = clear ? '' : v.slice(p);
+      if (!del && !add && !enter && !clear) return;
+      busy = true;
+      api('/api/text', { text: add, del: del, clear: clear, enter: enter }).then(function (r) {
+        busy = false;
+        if (r && r.ok) {
+          sent = clear ? '' : v;
+          // After Enter the TV field has been submitted: start fresh, unless more was typed meanwhile.
+          if (enter) { sent = ''; if (box.value === v) box.value = ''; }
+        }
+        if (again) { again = false; flush(); }
+      });
+    }
+    box.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(flush, 150); });
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); wantEnter = true; buzz(); flush(); }
+      else if (e.key === 'Escape') box.blur();
+    });
+    $('enter').onclick = function () { wantEnter = true; buzz(); flush(); };
+    $('clear').onclick = function () { box.value = ''; wantClear = true; buzz(); flush(); };
+  })();
+
+  // ---- Home lists (Popular, Favourites, Recent) as tiles; tap opens on the TV ----
+  function openUrl(u) { api('/api/open', { url: u }); buzz(); setTimeout(poll, 600); setTimeout(loadHome, 2000); }
+  function tile(it) {
+    var b = document.createElement('button'), ic = document.createElement('span'), nm = document.createElement('span');
+    b.className = 'tile'; ic.className = 'ic'; nm.className = 'nm';
+    nm.textContent = it.title || it.url;
+    function letter() { ic.textContent = it.letter || '?'; ic.style.background = it.color || '#6366F1'; }
+    if (it.icon) {
+      // The TV's own saved favicon: the phone never fetches icons from the sites themselves.
+      var img = new Image();
+      img.alt = '';
+      img.onerror = function () { img.remove(); letter(); };
+      img.src = '/api/icon?t=' + encodeURIComponent(token) + '&h=' + encodeURIComponent(it.icon);
+      ic.style.background = '#fff'; ic.appendChild(img);
+    } else letter();
+    b.appendChild(ic); b.appendChild(nm);
+    b.onclick = function () { openUrl(it.url); };
+    return b;
+  }
+  function loadHome() {
+    getJson('/api/home').then(function (h) {
+      var box = $('homeLists'); box.textContent = '';
+      [['popular', 'Popular'], ['favourites', 'Favourites'], ['recent', 'Recently visited']].forEach(function (s) {
+        var list = h[s[0]] || [];
+        if (!list.length) return;
+        var l = document.createElement('div'); l.className = 'label'; l.textContent = s[1];
+        var g = document.createElement('div'); g.className = 'tiles';
+        list.forEach(function (it) { g.appendChild(tile(it)); });
+        box.appendChild(l); box.appendChild(g);
+      });
+      $('home').querySelector('details').open = !box.childNodes.length;
+    }).catch(function () { setOnline(false); });
+  }
+  function openTyped() {
+    var el = $('url');
     if (!el.value) return;
-    api('/api/open', { url: el.value }); el.value = ''; el.blur();
+    openUrl(el.value); el.value = ''; el.blur();
   }
-  document.getElementById('open').onclick = openUrl;
-  document.getElementById('url').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); openUrl(); } });
+  $('open').onclick = openTyped;
+  $('url').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); openTyped(); } });
 
-  function poll() {
-    fetch('/api/state', { headers: { 'X-Token': token } })
-      .then(function (r) { setOnline(r.ok); return r.json(); })
-      .then(function (s) { document.getElementById('now').textContent = s.title || ''; })
-      .catch(function () { setOnline(false); });
+  // ---- Now playing ----
+  var media = null, mediaAt = 0, dragging = false;
+  function fmt(s) {
+    s = Math.max(0, Math.floor(s)); var h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+    return (h ? h + ':' + (m < 10 ? '0' : '') : '') + m + ':' + (x < 10 ? '0' : '') + x;
   }
-  poll(); setInterval(poll, 4000);
+  function renderMedia(m, title) {
+    media = m; mediaAt = Date.now();
+    $('np').hidden = !m;
+    if (!m) return;
+    $('npTitle').textContent = title || '';
+    $('npSeek').hidden = !(m.d > 0);
+    $('npPlay').textContent = m.playing ? '❚❚' : '▶';
+    $('npCc').hidden = !m.cc; $('npCc').className = m.ccOn ? 'on' : '';
+    $('npFull').className = m.fs ? 'on' : '';
+    if (m.d > 0) { $('npBar').max = Math.floor(m.d); $('npD').textContent = fmt(m.d); }
+    tick();
+  }
+  function tick() {
+    if (!media || !(media.d > 0) || dragging) return;
+    var t = Math.min(media.d, media.t + (media.playing ? (Date.now() - mediaAt) / 1000 : 0));
+    $('npBar').value = Math.floor(t); $('npT').textContent = fmt(t);
+  }
+  setInterval(tick, 250);
+  $('npBar').addEventListener('input', function () { dragging = true; $('npT').textContent = fmt(+this.value); });
+  $('npBar').addEventListener('change', function () {
+    var t = +this.value; dragging = false;
+    if (media) { media.t = t; mediaAt = Date.now(); }
+    api('/api/media', { action: 'seek', to: t }); buzz();
+  });
+  $('npFull').onclick = function () { buzz(); api('/api/media', { action: 'fullscreen' }); setTimeout(poll, 600); };
+  $('npCc').onclick = function () { buzz(); api('/api/media', { action: 'captions' }); setTimeout(poll, 300); };
+
+  // ---- Keyboard, when used from a computer ----
+  var KEYMAP = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', Enter: 'ok' }, down = {};
+  document.addEventListener('keydown', function (e) {
+    var t = e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+    var k = KEYMAP[e.key];
+    if (k) { e.preventDefault(); if (!down[k]) { down[k] = 1; api('/api/key', { key: k, action: 'down' }); } }
+    else if (e.key === 'Backspace' || e.key === 'Escape') { e.preventDefault(); if (!e.repeat) press('back'); }
+  });
+  document.addEventListener('keyup', function (e) {
+    var k = KEYMAP[e.key];
+    if (k && down[k]) { delete down[k]; api('/api/key', { key: k, action: 'up' }); }
+  });
+  window.addEventListener('blur', function () { Object.keys(down).forEach(function (k) { api('/api/key', { key: k, action: 'up' }); }); down = {}; });
+
+  // ---- State: title, pointer mode, video. Faster while a video plays; paused while this tab is hidden. ----
+  var pollTimer = null, pollGen = 0;
+  function poll() {
+    clearTimeout(pollTimer);
+    if (document.hidden) return;
+    var gen = ++pollGen;
+    getJson('/api/state').then(function (s) {
+      $('now').textContent = s.title || '';
+      if (pointer !== !!s.pointer) { pointer = !!s.pointer; $('touch').hint(); }
+      renderMedia(s.media || null, s.title);
+    }).catch(function () { setOnline(false); }).then(function () {
+      if (gen === pollGen) pollTimer = setTimeout(poll, media ? 1000 : 2500);
+    });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) { poll(); loadHome(); } });
+  poll(); loadHome();
 </script>
 </body>
 </html>

@@ -79,6 +79,20 @@ class CursorView @JvmOverloads constructor(context: Context, attrs: AttributeSet
 
     fun releaseAll() { left = false; right = false; up = false; down = false }
 
+    /** Phone touchpad: move by (dx, dy) screen px. Pushing past an edge scrolls, like a held D-pad. */
+    fun moveBy(dx: Float, dy: Float) {
+        if (width == 0 || height == 0) return
+        val nx = (x0 + dx).coerceIn(0f, width - 1f)
+        val ny = (y0 + dy).coerceIn(0f, height - 1f)
+        val edgeX = if (dx != 0f && nx == x0) (if (dx > 0) 1 else -1) else 0
+        val edgeY = if (dy != 0f && ny == y0) (if (dy > 0) 1 else -1) else 0
+        if (edgeX != 0 || edgeY != 0) onEdgeScroll?.invoke(edgeX, edgeY)
+        x0 = nx; y0 = ny
+        wake()
+        onMove?.invoke(x0, y0)
+        invalidate()
+    }
+
     /** Makes the pointer visible again after it auto-hid. */
     fun wake() {
         lastActivity = System.currentTimeMillis()
