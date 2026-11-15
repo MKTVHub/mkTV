@@ -974,6 +974,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     /** Hands the manifest to the native player, with the headers the page used. */
     private fun playNative(s: DetectedStream) {
+        // Otherwise the page's own copy resumes, with sound, when the player closes.
+        webView.evaluateJavascript("window.__sp && __sp.pause && __sp.pause()", null)
         startActivity(
             Intent(this, PlayerActivity::class.java)
                 .putExtra(PlayerActivity.EXTRA_URL, s.url)

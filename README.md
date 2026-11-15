@@ -4,9 +4,9 @@
 
 mkTV turns the D-pad into a fast way to use any website: the highlight jumps from link to link like a TV app, videos take over the remote when they play, and ads, pop-ups and hostile redirects are blocked by default. It runs on Android TV and Google TV today, with Fire TV, LG webOS and Samsung Tizen on the [roadmap](docs/ROADMAP.md).
 
-[![Watch mkTV in 30 seconds](docs/screenshots/promo-poster.jpg)](https://mktvhub.github.io/assets/mktv-promo.mp4)
+[![Watch mkTV in 40 seconds](docs/screenshots/promo-poster.jpg)](https://mktvhub.github.io/assets/mktv-promo.mp4)
 
-<p align="center"><a href="https://mktvhub.github.io/assets/mktv-promo.mp4">▶ Watch mkTV in 30 seconds</a> · <a href="https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk">⬇ Download the APK</a> · <a href="https://mktvhub.github.io">mktvhub.github.io</a></p>
+<p align="center"><a href="https://mktvhub.github.io/assets/mktv-promo.mp4">▶ Watch mkTV in 40 seconds</a> · <a href="https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk">⬇ Download the APK</a> · <a href="https://mktvhub.github.io">mktvhub.github.io</a></p>
 
 ## Features
 
