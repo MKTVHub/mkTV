@@ -88,9 +88,26 @@
     return res;
   }
 
+  // Cloudflare Turnstile draws its checkbox in an iframe inside a closed shadow root, which
+  // querySelectorAll can't see. Its host <div> sits next to the hidden response field; the widget is
+  // left-aligned in it, so the box covers the checkbox and its label and OK taps the label.
+  var checkHosts = new WeakSet();
+  function humanCheckHosts() {
+    var out = [], fs = document.querySelectorAll('input[name="cf-turnstile-response"]');
+    for (var i = 0; i < fs.length; i++) {
+      var h = fs[i].parentElement && fs[i].parentElement.firstElementChild;
+      if (h && h !== fs[i] && h.tagName !== 'INPUT') { checkHosts.add(h); out.push(h); }
+    }
+    return out;
+  }
+
   // Inline links (<a> around a block image) report only a one-line box; measure what's inside.
   function rectOf(el) {
     var r = el.getBoundingClientRect();
+    if (checkHosts.has(el)) {
+      var w = Math.min(r.width, r.height > 100 ? 150 : 190); // compact 150×140, normal 300×65
+      return { left: r.left, top: r.top, right: r.left + w, bottom: r.bottom, width: w, height: r.height };
+    }
     if (!el.children.length || getComputedStyle(el).display !== 'inline') return r;
     var l = 1e9, t = 1e9, rt = -1e9, b = -1e9, any = false;
     for (var i = 0; i < el.children.length && i < 12; i++) {
@@ -130,6 +147,8 @@
     }
     var q = document.querySelectorAll(SEL);
     for (var i = 0; i < q.length; i++) { add(q[i]); if (set.has(q[i])) real.add(q[i]); }
+    var hc = humanCheckHosts();
+    for (var k = 0; k < hc.length; k++) { add(hc[k]); if (set.has(hc[k])) real.add(hc[k]); }
     // Framework buttons often have no attributes, only cursor:pointer. Bounded scan near the viewport.
     if (document.body) {
       var all = document.body.getElementsByTagName('*'), checked = 0;
