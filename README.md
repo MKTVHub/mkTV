@@ -10,9 +10,10 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 
 ## Features
 
-- **Jump navigation.** ▲▼◀▶ move a highlight between links and buttons; OK clicks, hold OK to long-press. Hold ▼ or ▲ to jump to a site's fixed bottom or top bar. Prefer a mouse? Switch to **pointer mode**.
+- **Jump navigation.** ▲▼◀▶ move a highlight between links and buttons; OK clicks, hold OK to long-press. Hold ▼ or ▲ to jump to a site's fixed bottom or top bar. Prefer a mouse? Switch to **pointer mode**, with Slow / Normal / Fast speed.
 - **Out of the way.** The top bar hides while you browse and comes back when you need it.
-- **Home screen.** Popular sites, your Favourites and Recently visited, one press away. Edit Popular, hide or reorder sections, and rename, reorder and group Favourites into folders right on the TV.
+- **Home screen.** Continue watching, Popular sites, your Favourites and Recently visited, one press away, one row each (Favourites has **Show all**). Edit Popular, hide or reorder sections, and rename, reorder and group Favourites into folders right on the TV.
+- **Continue watching.** Long videos remember where you stopped, on any site. Pick up from Home, or from the **Play Next** row on your Android TV home screen. Never in private browsing; turn it off in Settings → Privacy.
 - **Tabs.** Up to six live tabs (more sleep and reload when you return). A pop-up you clicked opens in a new tab; Back on its first page closes it and returns you. Switch from ⋮ → Tabs or by holding Menu. Background tabs are muted. Links opened from other apps arrive in a new tab of the one running mkTV.
 - **Smart address bar.** Choose Google, DuckDuckGo, Bing, Brave or Startpage. As you type, it suggests matching Favourites and History pages, plus search suggestions from your engine if you turn them on (off by default, never in private browsing).
 - **Voice search.** Press the mic in the toolbar and say a search or a website.
@@ -27,8 +28,9 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **YouTube ad removal** using the same technique as uBlock Origin and Brave.
 - **Private browsing.** A separate session that is deleted when you close it. Tracking codes are stripped from links and Global Privacy Control is on.
 - **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video, volume and page scroll. The QR code carries a 128-bit pairing code that stays valid until you press **New code**, which unpairs every phone. The **Devices** tab lists connected phones with **Disconnect**, the TV shows a notice when a new phone connects, and Settings has an on/off switch.
+- **Parental controls.** A 4-digit PIN for Settings, private browsing, downloads and the phone remote; Safe search for Google, Bing and DuckDuckGo; and sites that never load, in any tab.
 - **Share Wi-Fi.** Show a QR code that guests scan to join your Wi-Fi.
-- **Settings** in a sidebar of sections: Navigation, Start screen, Search, Protection, Blocklists, Privacy, Phone remote, Browsing, Downloads, Updates.
+- **Settings** in a sidebar of sections: Navigation, Start screen, Search, Protection, Blocklists, Privacy, Parental controls, Phone remote, Browsing, Downloads, Updates.
 
 Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 

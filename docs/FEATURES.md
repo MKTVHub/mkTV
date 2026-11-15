@@ -45,10 +45,11 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 ## Home screen
 
 **What.** The start screen (and the ⌂ button) shows the mkTV logo over a soft violet glow, and four sections:
-- **Continue watching** (first, only when it has something): videos you didn't finish. See [Continue watching](#continue-watching).
+- **Continue watching** (first, only when it has something): one row of the newest videos you didn't finish. See [Continue watching](#continue-watching).
 - **Popular:** compact tiles, by default YouTube (opens `youtube.com/tv`, the TV interface), Netflix, Prime Video, Disney+, Spotify, YouTube Music, Twitch and TikTok. **Edit** lets you remove tiles and add others from one-press "＋" suggestions (`Prefs.POPULAR_SUGGESTIONS`, plus any default you removed).
+- Each section is one row so the ones below stay in view. Favourites with more than five sites show four and a **Show all (n sites)** tile; it becomes **Show less**. Edit mode and folders always show every site.
 - **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. One level of **folders**: a folder tile shows how many sites it holds; OK opens it in the same grid, and Back (or "◀ Favourites") returns. Adding while a folder is open puts the site in that folder. In **Edit**, OK on a tile chooses it and shows its actions under the grid: ◀ Move / Move ▶ (reorder), a name field (rename), Move into a folder / Move out of folder, Open folder, Remove. "＋ New folder" sits in the section tools. Everything saves as you change it. Removing a folder keeps its sites: they go back to the top level.
-- **Recently visited:** up to 10 shown (12 stored), one per site, newest first, excluding favourites. Not shown in private mode.
+- **Recently visited:** one row (5) shown (12 stored; the rest are in History), one per site, newest first, excluding favourites. Not shown in private mode.
 
 **Sections.** In Edit, each section (Popular, Favourites) has ↑ Move up / ↓ Move down and Hide. Hidden sections come back from Settings → Start screen, which has a Show switch per section and Home screen layout → Reset (default order, all sections shown, default Popular sites).
 

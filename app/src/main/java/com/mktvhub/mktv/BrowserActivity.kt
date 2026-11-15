@@ -987,6 +987,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private lateinit var shortcutsPanel: View
     private var editingShortcuts = false
+    /** Favourites show one row on Home until "Show all" is pressed, so the sections below stay in view. */
+    private var favExpanded = false
     private var editingPopular = false
     private var editingContinue = false
     /** Top-level index of the Favourites folder being shown, or -1 for the top level. */
@@ -1066,6 +1068,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (shortcutsPanel.visibility != View.VISIBLE) return
         shortcutsPanel.visibility = View.GONE
         editingShortcuts = false
+        favExpanded = false
         onOverlayChanged(null)
     }
 
@@ -1117,7 +1120,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         // Shown only when there is something to continue (arrangeHome made every section that isn't hidden visible).
         if (watching.isEmpty()) findViewById<View>(R.id.cwSection).visibility = View.GONE
         renderFavourites(tree, folder)
-        val recent = if (inPrivate || "rec" in prefs.hiddenSections) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
+        // One row: the full list is in History.
+        val recent = if (inPrivate || "rec" in prefs.hiddenSections) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }
+            .take(findViewById<android.widget.GridLayout>(R.id.recentGrid).columnCount)
         findViewById<View>(R.id.recentTitle).visibility = if (recent.isEmpty()) View.GONE else View.VISIBLE
         fillGrid(R.id.recentGrid, recent, height = 130, iconSize = 44, kind = "rec")
 
@@ -1355,8 +1360,22 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (folder != null) favFolderBar.text = "◀  Favourites  ›  ${folder.title}"
         val nodes: List<Bookmarks.Node> = folder?.items ?: tree
         val sel = selectedFav?.takeIf { editingShortcuts && it.folder == openFolder }
-        val items = nodes.map { n -> n.title to ((n as? Bookmarks.Link)?.url ?: "folder:${n.title}") }
+        val all = nodes.map { n -> n.title to ((n as? Bookmarks.Link)?.url ?: "folder:${n.title}") }
+        // One row at the top level (its last slot becomes "Show all"); Edit and folders always show everything.
+        val cols = findViewById<android.widget.GridLayout>(R.id.shortcutsGrid).columnCount
+        val collapsible = folder == null && !editingShortcuts && all.size > cols
+        val items = when {
+            !collapsible -> all
+            favExpanded -> all + ("Show less" to "more:less")
+            else -> all.take(cols - 1) + ("Show all" to "more:all")
+        }
         fillGrid(R.id.shortcutsGrid, items, height = 150, iconSize = 56, kind = "fav") { i, title, url ->
+            if (url.startsWith("more:")) return@fillGrid moreTile(title, if (favExpanded) "" else "${all.size} sites",
+                if (favExpanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more) {
+                favExpanded = !favExpanded
+                renderShortcuts()
+                favTile(cols - 1)?.requestFocus()
+            }
             val n = nodes[i]
             val loc = Bookmarks.Loc(openFolder, i)
             val selected = sel == loc
@@ -1406,6 +1425,31 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         selectedFav = null
         renderShortcuts()
         favTile(was)?.requestFocus()
+    }
+
+    /** "Show all" / "Show less" for a section that is cut to one row. */
+    private fun moreTile(label: String, sub: String, icon: Int, onClick: () -> Unit): View {
+        val tile = FrameLayout(this).apply {
+            setBackgroundResource(R.drawable.tile_bg)
+            isClickable = true; isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        col.addView(android.widget.ImageView(this).apply { setImageResource(icon); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER },
+            LinearLayout.LayoutParams(dp(48), dp(48)))
+        col.addView(TextView(this).apply {
+            text = label; setTextColor(android.graphics.Color.WHITE); textSize = 15f; gravity = android.view.Gravity.CENTER
+            setPadding(0, dp(10), 0, 0)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        if (sub.isNotEmpty()) col.addView(TextView(this).apply {
+            text = sub; setTextColor(0xFF9CA3AF.toInt()); textSize = 12f; gravity = android.view.Gravity.CENTER
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        tile.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return tile
     }
 
     private fun folderTile(f: Bookmarks.Folder, onClick: () -> Unit, badge: String?, badgeColor: Int): View {
@@ -1723,9 +1767,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     // ---- Continue watching: where long videos were left (pure rules in ContinueWatching.kt, launcher rows in TvHome.kt) ----
 
-    /** What Home shows (two rows at most): nothing in private browsing, when the section is hidden or the setting is off. */
+    /** What Home shows (one row, newest first): nothing in private browsing, when the section is hidden or the setting is off. */
     private fun continueList(): List<ContinueWatching.Entry> =
-        if (inPrivate || "cw" in prefs.hiddenSections || !prefs.rememberWatching) emptyList() else prefs.continueWatching.take(10)
+        if (inPrivate || "cw" in prefs.hiddenSections || !prefs.rememberWatching) emptyList()
+        else prefs.continueWatching.take(findViewById<android.widget.GridLayout>(R.id.cwGrid).columnCount)
 
     /** Site icon, title, a thin progress bar and the time left. In Edit, OK removes it. */
     private fun continueTile(e: ContinueWatching.Entry): View {
