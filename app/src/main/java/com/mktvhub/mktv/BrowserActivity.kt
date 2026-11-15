@@ -2093,6 +2093,23 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private val heldKeys = HashMap<Int, Runnable>()
 
+    /**
+     * Phone keys are dispatched straight into the activity, which skips the step of Android's input
+     * pipeline that moves focus between views on arrow keys (only scrolling containers handled ▲▼ by
+     * themselves, so ◀▶ between Home's buttons did nothing). Do that focus move here when nothing
+     * else consumed the arrow, exactly as a hardware D-pad would.
+     */
+    private fun sendRemoteKey(e: KeyEvent): Boolean {
+        e.source = android.view.InputDevice.SOURCE_DPAD
+        if (dispatchKeyEvent(e) || e.action != KeyEvent.ACTION_DOWN) return true
+        val dir = when (e.keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP; KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN
+            KeyEvent.KEYCODE_DPAD_LEFT -> View.FOCUS_LEFT; KeyEvent.KEYCODE_DPAD_RIGHT -> View.FOCUS_RIGHT
+            else -> return false
+        }
+        return currentFocus?.focusSearch(dir)?.requestFocus(dir) == true
+    }
+
     override fun onKey(key: String, action: String) = runOnUiThread {
         if (key == "home") { if (action != "up") { closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
         // Apps can't inject volume keys; adjust the media stream directly (FLAG_SHOW_UI shows the TV's own volume bar).
@@ -2117,13 +2134,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             "down" -> {
                 heldKeys.remove(code)?.let { root.removeCallbacks(it) }
                 val downTime = now
-                dispatchKeyEvent(KeyEvent(downTime, now, KeyEvent.ACTION_DOWN, code, 0))
+                sendRemoteKey(KeyEvent(downTime, now, KeyEvent.ACTION_DOWN, code, 0))
                 // Holding a phone button behaves like holding the remote: key repeats after 450 ms.
                 val repeater = object : Runnable {
                     var count = 1
                     override fun run() {
                         val t = SystemClock.uptimeMillis()
-                        dispatchKeyEvent(KeyEvent(downTime, t, KeyEvent.ACTION_DOWN, code, count++, 0, 0, 0, KeyEvent.FLAG_LONG_PRESS.takeIf { count == 2 } ?: 0))
+                        sendRemoteKey(KeyEvent(downTime, t, KeyEvent.ACTION_DOWN, code, count++, 0, 0, 0, KeyEvent.FLAG_LONG_PRESS.takeIf { count == 2 } ?: 0))
                         root.postDelayed(this, 90)
                     }
                 }
@@ -2132,11 +2149,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
             "up" -> {
                 heldKeys.remove(code)?.let { root.removeCallbacks(it) }
-                dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
+                sendRemoteKey(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
             }
             else -> {
-                dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-                dispatchKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
+                sendRemoteKey(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
+                sendRemoteKey(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
             }
         }
     }
