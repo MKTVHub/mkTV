@@ -5,7 +5,7 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 This product includes or uses the following third-party software and data:
 
-AndroidX (androidx.core, androidx.webkit) and AndroidX Media3
+AndroidX (androidx.core, androidx.webkit, androidx.tvprovider) and AndroidX Media3
 (media3-exoplayer, media3-exoplayer-hls, media3-exoplayer-dash, media3-ui)
 Copyright The Android Open Source Project
 Licensed under the Apache License, Version 2.0.

@@ -44,7 +44,8 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## Home screen
 
-**What.** The start screen (and the ⌂ button) shows three rows:
+**What.** The start screen (and the ⌂ button) shows four rows:
+- **Continue watching** (first, only when it has something): videos you didn't finish. See [Continue watching](#continue-watching).
 - **Popular:** YouTube (opens `youtube.com/tv`, the TV interface), YouTube Music, TikTok, Twitch, Dailymotion.
 - **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. One level of **folders**: a folder tile shows how many sites it holds; OK opens it in the same grid, and Back (or "◀ Favourites") returns. Adding while a folder is open puts the site in that folder. In **Edit**, OK on a tile chooses it and shows its actions under the grid: ◀ Move / Move ▶ (reorder), a name field (rename), Move into a folder / Move out of folder, Open folder, Remove. "＋ New folder" sits in the section tools. Everything saves as you change it. Removing a folder keeps its sites: they go back to the top level.
 - **Recently visited:** up to 10 shown (12 stored), one per site, newest first, excluding favourites. Not shown in private mode.
@@ -58,6 +59,18 @@ Settings → Start screen can replace it with a fixed home page address.
 **Where.** `// region Shortcuts` (Favourites folders and edit actions: `renderFavourites`, `renderFavActions`), `Bookmarks.kt` (pure tree operations, tested in `BookmarksTest`), `Prefs.bookmarks` (still stored under the old `shortcuts` key: links are `{title,url}`, a folder is `{title,items}`; old lists load unchanged), `Prefs.shortcuts` (flattened), `Prefs.recent`. The phone remote's `/api/home` lists favourites flattened, folders opened in place.
 
 **Limits.** Once you make a folder, installing an older mkTV over this one is not supported: older builds can't read folders. The icon fetch contacts every site on the home screen once, including Popular sites you have never opened (not in private mode). See [PRIVACY.md](PRIVACY.md).
+
+## Continue watching
+
+**What.** mkTV remembers where you stopped in long videos (3 minutes or more) and shows them first on Home: site icon, title, a thin progress bar and "12 min left". OK opens the page. When you open a page with a saved position, a small notice offers **Resume from 12:34**: press ▼ to reach its Resume button (in watch mode too) and OK to jump there; it fades after 10 s, and Back closes it. Sites that resume by themselves get no notice. The native player (Watch full screen) resumes the page's position by itself and says "Resumed from 12:34". On Home, **Edit** shows ✕ on each tile (OK removes it) and the section tools (Move up / Move down / Hide).
+
+On Android TV the same videos appear in the system **Play Next** row (Watch Next) with their progress, and in a **mkTV** channel on the TV home screen with your Favourites. Choosing a card opens mkTV on that page: in the tab already showing it, in the current tab if it is blank, otherwise in a new tab.
+
+**How.** Every 10 s while mkTV is on screen (and when you switch tabs or leave mkTV), mkTV reads the page's main `<video>` with `__sp.status()`, the same call the phone remote's Now playing uses, and saves page address, title, site, position, duration and time. Only while the video plays; nothing under 30 s; within the last 60 s or past 95 % counts as finished and removes the entry. At most 20, newest first. The notice seeks with `__sp.seekTo`, like the phone remote's seek bar. `PlayerActivity` saves under the page's address on the same rules. The launcher rows are updated on a background thread when an entry is added, finished or removed, and when mkTV goes to the background.
+
+**Where.** `ContinueWatching.kt` (pure rules and JSON, tested in `ContinueWatchingTest`; `HomeSections.merge` puts the new section on top of older saved orders), `TvHome.kt` (TV provider), the "Continue watching" block in `// region Shortcuts` (`continueTile`, `sampleWatching`, `commitWatch`, `maybeOfferResume`, `openFromTvHome`), `PlayerActivity.savePosition`, `Prefs.continueWatching`. Settings → Privacy → Remember where I stopped watching (on by default; off also forgets the list) and Clear Continue watching. Clear browsing data (History) clears it too.
+
+**Limits.** Never in private browsing. Only the top page's largest visible video (players in cross-origin iframes aren't reachable, as for watch mode). On the YouTube TV interface the notice can't be reached with ▼ (the site has the remote), but YouTube resumes by itself. Launcher cards show the mkTV banner, not the site's icon (site icons are in mkTV's private storage). Google TV may not show third-party channels at all; Play Next is the dependable row. Removing a card from Play Next removes it from Continue watching too. Positions on the launcher can be up to a few minutes behind while you keep watching.
 
 ## History
 
@@ -270,9 +283,9 @@ Sections and what they control (`renderSettings`):
 | Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`) |
 | Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
-| Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
+| Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default), Remember where I stopped watching (on by default), Clear Continue watching |
 | Blocklists | Total blocked domains and Update all; built-in filter lists (on/off, count, last update, Update); lists added by address (also Remove); Add a list by address; Never blocked (allowlist) with Allow <current site> and Allow a domain |
-| Browsing | Auto-hide the top bar, Auto-unmute videos, Default zoom (− / + and Reset sites), Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
+| Browsing | Auto-hide the top bar, Auto-unmute videos, Default zoom (− / + and Reset sites), Desktop sites, Clear browsing data (clears cookies, site storage, cache, history, recents and Continue watching; press twice to confirm) |
 | Updates | Installed version and status, Check now / Update, Check for updates (daily, on by default) |
 
 Settings save as you change them. Closing Settings reloads the page if anything that needs a reload changed.
@@ -281,7 +294,7 @@ Settings save as you change them. Closing Settings reloads the page if anything 
 
 - **Address bar:** text without a scheme becomes `https://…` if it looks like a host, otherwise a search with the chosen engine (see above).
 - **Desktop site:** switches the user agent to desktop Chrome on Windows.
-- **Open a URL from another app or adb:** an intent with a data URI loads it.
+- **Open a URL from another app or adb:** an intent with a data URI loads it (in a new tab if a page is open). Cards on the TV home screen carry a marker and reuse a tab already on that page.
 - **Exit:** Back on the first page asks "Press Back again to exit".
 
 ## Phone remote
