@@ -32,7 +32,8 @@ app/src/main/
   java/com/mktvhub/mktv/
     BrowserActivity.kt    The whole browser shell (see regions below)
     CursorView.kt         Native overlay: pointer arrow (pointer mode) and focus ring (jump mode)
-    AdBlocker.kt          Loads bundled + downloaded host lists; holds the live Set<String>
+    AdBlocker.kt          Loads bundled + downloaded filter lists; holds the live Set<String> and the allowlist
+    FilterLists.kt        Pure: filter list presets, list parser (hosts, domains, ||domain^), allowlist matching
     HostRules.kt          Pure Kotlin helpers: host matching, site-of, hosts parsing, stream URL detection, tracking-param stripping
     WebSearch.kt          Pure: search engines, address-bar input → URL, suggestion parsing, Favourites/History matching
     History.kt            Pure: browsing history list, search, day labels
@@ -48,7 +49,7 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):

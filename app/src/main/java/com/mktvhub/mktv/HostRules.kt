@@ -32,26 +32,8 @@ object HostRules {
         return sa == siteOf(b)
     }
 
-    private val SELF_ENTRIES = setOf("localhost", "localhost.localdomain", "local", "broadcasthost", "0.0.0.0", "ip6-localhost", "ip6-loopback")
-
-    /** Parses hosts-file ("0.0.0.0 ads.example.com") or plain domain-per-line lists. */
-    fun parseHosts(text: String): Set<String> {
-        val out = HashSet<String>()
-        text.lineSequence().forEach { raw ->
-            val line = raw.substringBefore('#').trim()
-            if (line.isEmpty()) return@forEach
-            // Second token if present ("0.0.0.0 host"), else the first. No regex: lists have ~150k lines.
-            val firstEnd = line.indexOfFirst { it == ' ' || it == '\t' }
-            val token = if (firstEnd < 0) line else line.substring(firstEnd).trim().let { rest ->
-                val end = rest.indexOfFirst { it == ' ' || it == '\t' }
-                if (end < 0) rest else rest.substring(0, end)
-            }
-            val domain = token.lowercase().trimEnd('.')
-            if (domain in SELF_ENTRIES || !domain.contains('.') || domain.all { it.isDigit() || it == '.' }) return@forEach
-            out += domain
-        }
-        return out
-    }
+    /** Parses hosts-file ("0.0.0.0 ads.example.com"), plain domain-per-line or simple "||domain^" lists. */
+    fun parseHosts(text: String): Set<String> = FilterLists.parse(text)
 
     private val STREAM_EXT = Regex("""\.(m3u8|mpd)(\?|$|#)""", RegexOption.IGNORE_CASE)
 

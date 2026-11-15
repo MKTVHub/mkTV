@@ -8,16 +8,17 @@ In normal mode, in the app's private storage (`/data/data/com.mktvhub.mktv`):
 
 | Data | Where | Cleared by |
 |---|---|---|
-| Settings (home page, toggles, navigation mode, blocklist URL, search engine) | `SharedPreferences` file `browser` | Uninstall / Android "Clear storage" |
+| Settings (home page, toggles, navigation mode, which filter lists are on, lists you added by address, search engine) | `SharedPreferences` file `browser` | Uninstall / Android "Clear storage" |
 | Favourites (title + URL) | same | Removing them on the home screen (Edit) |
 | Recently visited (up to 12 entries: title + URL, one per site) | same | Clear browsing data (History) |
 | History (up to 500 entries: title, URL, time) | `SharedPreferences` file `history` | Clear browsing data (History, or Settings → Browsing), History → Clear history, Remove on a row |
 | Update check result (latest version number, its download URL and size, time of the last check, a version you chose "Later" for) | `SharedPreferences` file `browser` | Uninstall / "Clear storage" |
 | A downloaded update (`mkTV-<version>.apk`) | `cache/updates/` | Replaced by the next download; Android may clear app caches |
 | Sites where blocking is paused | same | Settings → Protection → Resume |
+| Allowlist (domains never blocked) | same | Settings → Blocklists → Remove |
 | All-time blocked count | same | Uninstall |
 | Site icons (one PNG per site you visited or saved, and for the Popular tiles) | `files/icons/` | Uninstall / "Clear storage" only |
-| Downloaded blocklist | `files/remote_hosts.txt` | Replaced on refresh |
+| Downloaded filter lists (one file per list that is or was on) | `files/lists/<id>.txt` | Replaced on refresh; deleted when you remove a list you added |
 | Cookies, cache, local storage, IndexedDB, back/forward history | WebView's own storage | Clear browsing data |
 
 `android:allowBackup` is currently `true`, so Android's device backup may include the settings and history files with favourites, recents and history.
@@ -26,7 +27,7 @@ In normal mode, in the app's private storage (`/data/data/com.mktvhub.mktv`):
 
 mkTV itself only makes these requests. Everything else is the web pages you open, loaded by the system WebView.
 
-1. **Blocklist download.** At app start, if the cached copy is over a day old (or when you press Update now), mkTV downloads the hosts file from the Blocklist URL. Default: `https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts` (GitHub sees your IP address). Clear the URL in Settings → Blocklist to turn this off.
+1. **Filter list downloads.** For each list that is on in Settings → Blocklists, mkTV downloads it at launch or when it comes back on screen if the cached copy is over a day old, and when you press Update. Plain GET with the default Java user agent and no cookies. Nothing about your browsing is sent, but each list's server sees your IP address and when you update. By default only StevenBlack unified is on (`raw.githubusercontent.com`, i.e. GitHub). Optional presets come from `raw.githubusercontent.com` (StevenBlack variants, HaGeZi), `small.oisd.nl` / `big.oisd.nl` (OISD) and `pgl.yoyo.org` (Peter Lowe's list). Lists you add by address are fetched from whatever server you typed. Turn all lists off to stop these requests; the small built-in list still works.
 2. **Site icons.** For home-screen tiles without an icon, mkTV requests `https://<site>/apple-touch-icon.png` and then `https://<site>/favicon.ico`, once per site per app session, with the WebView user agent. This includes the Popular tiles, even if you have never opened those sites. Not done in private mode.
 3. **The native player.** "Watch full screen" requests the stream directly, sending the Referer, Origin and cookies the page used for that stream, and the WebView user agent.
 4. **Update check.** Once a day at launch (and when you press Check now), mkTV requests `https://api.github.com/repos/MKTVHub/mkTV/releases/latest` with the user agent `mkTV/<version>`. GitHub sees your IP address and the mkTV version. Nothing about your browsing is sent. Turn it off in Settings → Updates → Check for updates. In private mode it still runs, since it carries nothing from the session.

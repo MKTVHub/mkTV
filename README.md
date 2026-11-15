@@ -20,7 +20,7 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **YouTube on the TV interface.** The YouTube tile opens YouTube's own TV interface, with the remote passed straight through.
 - **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for real full screen. Videos start with sound.
 - **Native player.** If a page plays an HLS or DASH stream, **Watch full screen** opens it in a native player that is smoother on TV hardware.
-- **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway**. Pause blocking for one site from the shield.
+- **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list; turn on OISD, HaGeZi, Peter Lowe's or StevenBlack variants, add any hosts or domain list by address, and allowlist domains that must never be blocked), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway**. Pause blocking for one site from the shield.
 - **YouTube ad removal** using the same technique as uBlock Origin and Brave.
 - **Private browsing.** A separate session that is deleted when you close it. Tracking codes are stripped from links and Global Privacy Control is on.
 - **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video, volume and page scroll.
@@ -64,7 +64,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 The app appears on the TV home screen as **mkTV**. Package: `com.mktvhub.mktv`. Requires Android 7.0 (API 24) or newer.
 
-Build-time defaults in `app/build.gradle.kts`: `DEFAULT_HOME_URL` (home page address, `https://www.google.com`) and `DEFAULT_BLOCKLIST_URL` (StevenBlack unified hosts). Both can be changed in Settings.
+Build-time default in `app/build.gradle.kts`: `DEFAULT_HOME_URL` (home page address, `https://www.google.com`), changeable in Settings. The built-in filter lists are in `FilterLists.PRESETS`.
 
 ## Install from a computer over Wi-Fi
 
@@ -172,7 +172,7 @@ You installed a self-built copy (debug key). Install the release APK once over i
 
 ## Privacy in one paragraph
 
-No accounts, no analytics, no telemetry. mkTV itself only downloads the blocklist and site icons for your home screen. Private browsing keeps nothing after you close it, but it does not hide your traffic from websites or your internet provider. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
+No accounts, no analytics, no telemetry. mkTV itself only downloads the blocklists you have on and site icons for your home screen. Private browsing keeps nothing after you close it, but it does not hide your traffic from websites or your internet provider. Details: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ## License
 

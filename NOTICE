@@ -22,5 +22,19 @@ StevenBlack/hosts (https://github.com/StevenBlack/hosts)
 Copyright Steven Black
 Licensed under the MIT License.
 Not bundled in the APK. By default the app downloads the unified hosts file at
-runtime from raw.githubusercontent.com and caches it on the device. The URL can
-be changed or cleared in Settings > Blocklist.
+runtime from raw.githubusercontent.com and caches it on the device. The gambling
+and fake-news variants are optional. Lists can be turned off in Settings > Blocklists.
+
+The following optional filter lists are not bundled in the APK. The app only
+stores their addresses; each is downloaded at runtime from its author, on the
+device, when the user turns it on in Settings > Blocklists:
+
+OISD (https://oisd.nl, https://github.com/sjhgvr/oisd)
+Licensed under the GNU General Public License v3.0.
+
+HaGeZi DNS blocklists (https://github.com/hagezi/dns-blocklists)
+Licensed under the GNU General Public License v3.0.
+
+Peter Lowe's ad and tracking server list (https://pgl.yoyo.org/adservers/)
+Copyright Peter Lowe. Licensed under the McRae General Public License
+(free to use except in ways that make anybody money).
