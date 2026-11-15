@@ -46,15 +46,16 @@
   .row { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
   .row.media, .row.vol { grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; }
   .row button, .np-row button { min-width:0; padding:0 2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ic { width:22px; height:22px; fill:currentColor; flex:none; }
+  .row button { display:flex; align-items:center; justify-content:center; gap:6px; }
+  .row button span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .row button { height:54px; border-radius:14px; border:0; background:var(--key); color:var(--text); font-size:15px; font-weight:600; }
   .row.media button { font-size:19px; }
   .row.vol button { font-size:14px; }
 
   .card { background:var(--card); border-radius:16px; padding:12px; margin-top:12px; }
-  .card label, .card .label, summary { color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; display:block; margin:2px 2px 8px; }
-  summary { cursor:pointer; margin:0 2px; list-style:none; }
-  summary::-webkit-details-marker { display:none; }
-  details[open] summary { margin-bottom:8px; }
+  .card label, .card .label { color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; display:block; margin:2px 2px 8px; }
+  #homeLists .label { margin-top:16px; }
   .field { display:flex; gap:8px; min-width:0; }
   .field input { flex:1; min-width:0; height:46px; border-radius:12px; border:1px solid #ffffff1a; background:#120f19; color:var(--text);
                  padding:0 12px; font-size:16px; user-select:text; -webkit-user-select:text; }
@@ -122,23 +123,23 @@
   <div class="touch" id="touch" hidden><span id="touchHint"></span></div>
 
   <div class="row">
-    <button data-key="back">↩ Back</button>
-    <button data-key="home">⌂ Home</button>
-    <button data-key="menu">⋮ Menu</button>
+    <button data-key="back"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z"/></svg><span>Back</span></button>
+    <button data-key="home"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10,20v-6h4v6h5v-8h3L12,3 2,12h3v8z"/></svg><span>Home</span></button>
+    <button data-key="menu"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12,8c1.1,0 2,-0.9 2,-2s-0.9,-2 -2,-2 -2,0.9 -2,2 0.9,2 2,2zM12,10c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2zM12,16c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2z"/></svg><span>Menu</span></button>
   </div>
   <div class="row media">
-    <button data-key="prev" aria-label="Previous">⏮︎</button>
-    <button data-key="rew" aria-label="Back 10 seconds">⏪︎</button>
-    <button data-key="playpause" aria-label="Play or pause">⏯︎</button>
-    <button data-key="ff" aria-label="Forward 10 seconds">⏩︎</button>
-    <button data-key="next" aria-label="Next">⏭︎</button>
+    <button data-key="prev" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6,6h2v12H6zM9.5,12l8.5,6V6z"/></svg></button>
+    <button data-key="rew" aria-label="Back 10 seconds"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M11,18V6l-8.5,6 8.5,6zM11.5,12l8.5,6V6l-8.5,6z"/></svg></button>
+    <button data-key="playpause" aria-label="Play or pause"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3,5v14l9,-7zM14,5h3v14h-3zM19,5h3v14h-3z"/></svg></button>
+    <button data-key="ff" aria-label="Forward 10 seconds"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4,18l8.5,-6L4,6v12zM13,6v12l8.5,-6L13,6z"/></svg></button>
+    <button data-key="next" aria-label="Next"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z"/></svg></button>
   </div>
   <div class="row vol">
-    <button data-key="voldown" aria-label="Volume down">Vol −</button>
-    <button data-key="mute" aria-label="Mute">Mute</button>
-    <button data-key="volup" aria-label="Volume up">Vol +</button>
-    <button data-key="pageup" aria-label="Page up">Pg ▲</button>
-    <button data-key="pagedown" aria-label="Page down">Pg ▼</button>
+    <button data-key="voldown" aria-label="Volume down"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M18.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.73 2.5,-2.25 2.5,-4.02zM5,9v6h4l5,5V4L9,9H5z"/></svg></button>
+    <button data-key="mute" aria-label="Mute"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v2.21l2.45,2.45c0.03,-0.2 0.05,-0.41 0.05,-0.63zM19,12c0,0.94 -0.2,1.82 -0.54,2.64l1.51,1.51C20.63,14.91 21,13.5 21,12c0,-4.28 -2.99,-7.86 -7,-8.77v2.06c2.89,0.86 5,3.54 5,6.71zM4.27,3L3,4.27 7.73,9H3v6h4l5,5v-6.73l4.25,4.25c-0.67,0.52 -1.42,0.93 -2.25,1.18v2.06c1.38,-0.31 2.63,-0.95 3.69,-1.81L19.73,21 21,19.73l-9,-9L4.27,3zM12,4L9.91,6.09 12,8.18V4z"/></svg></button>
+    <button data-key="volup" aria-label="Volume up"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3,9v6h4l5,5V4L7,9H3zM16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.73 2.5,-2.25 2.5,-4.02zM14,3.23v2.06c2.89,0.86 5,3.54 5,6.71s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z"/></svg></button>
+    <button data-key="pageup" aria-label="Page up"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.41,15.41L12,10.83l4.59,4.58L18,14l-6,-6 -6,6z"/></svg><span>Page</span></button>
+    <button data-key="pagedown" aria-label="Page down"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.41,8.59L12,13.17l4.59,-4.58L18,10l-6,6 -6,-6z"/></svg><span>Page</span></button>
   </div>
 </div>
 
@@ -170,14 +171,12 @@
   </div>
 
   <div class="card" id="home">
+    <label for="url">Search or open a site on TV</label>
+    <div class="field">
+      <input id="url" type="text" inputmode="search" placeholder="e.g. cooking videos or youtube.com" autocomplete="off" autocapitalize="off" enterkeyhint="go">
+      <button id="open">Go</button>
+    </div>
     <div id="homeLists"></div>
-    <details open>
-      <summary>Open a website ›</summary>
-      <div class="field">
-        <input id="url" type="url" placeholder="youtube.com" autocomplete="off" autocapitalize="off" enterkeyhint="go">
-        <button id="open">Open</button>
-      </div>
-    </details>
   </div>
 </div>
 </div>
@@ -358,7 +357,6 @@
         list.forEach(function (it) { g.appendChild(tile(it)); });
         box.appendChild(l); box.appendChild(g);
       });
-      $('home').querySelector('details').open = !box.childNodes.length;
     }).catch(function () { setOnline(false); });
   }
   function openTyped() {
