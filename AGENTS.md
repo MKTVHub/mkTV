@@ -98,9 +98,9 @@ mkTV is a **native Android shell around a system WebView, plus a JavaScript laye
 10. Jump mode: arrows call `jump()`; a held ▲/▼ (first repeat) jumps to the site's fixed bar; OK taps the ring.
 11. Pointer mode: arrows drive `CursorView`; OK taps at the pointer.
 
-Back is handled separately in `onBackPressed` (fullscreen, fill mode, suggestion list, phone remote panel, menu, watch mode, settings, History page, Downloads page, shield panel, home edit, Favourites folder, home, toolbar, bottom notice, back in page history, close the tab if other tabs are open, then "press again to exit"). On YouTube TV, `handleSiteRemote` sends a short Back to the page as Escape and a long Back opens the mkTV home screen.
+Back is handled separately in `onBackPressed` (playback controls panel, fullscreen, fill mode, suggestion list, phone remote panel, menu, watch mode, settings, History page, Downloads page, shield panel, home edit, Favourites folder, home, toolbar, bottom notice, back in page history, close the tab if other tabs are open, then "press again to exit"). On YouTube TV, `handleSiteRemote` sends a short Back to the page as Escape and a long Back opens the mkTV home screen.
 
-**Overlays vs page focus.** The home screen, settings, History page, Downloads page, shield panel, ⋮ menu, phone remote panel and address-bar suggestion list are native views using normal Android focus. When any is open (`overlayOpen()`), `webContainer` blocks descendant focus so the page cannot steal it, the top bar stays visible, and the cursor/ring is hidden. `onOverlayChanged()` is the single place that flips this; call it whenever you open or close an overlay.
+**Overlays vs page focus.** The home screen, settings, History page, Downloads page, shield panel, ⋮ menu, phone remote panel, address-bar suggestion list and watch mode's playback controls panel are native views using normal Android focus. When any is open (`overlayOpen()`), `webContainer` blocks descendant focus so the page cannot steal it, the top bar stays visible (except over the playback controls, which sit on the video), and the cursor/ring is hidden. `onOverlayChanged()` is the single place that flips this; call it whenever you open or close an overlay.
 
 ## Build, test, install
 

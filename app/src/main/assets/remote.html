@@ -79,6 +79,7 @@
   .np-row.np-chips { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .np-row.np-menu button { flex-direction:column; gap:2px; height:52px; font-size:12px; font-weight:600; }
   .np-row.np-menu .ic { width:20px; height:20px; }
+  .np-row button:disabled { opacity:.35; }
 
   .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(66px,100%),1fr)); gap:8px; margin-bottom:10px; }
   .tile { border:0; background:var(--key); border-radius:14px; padding:10px 4px 8px; color:var(--text); display:flex; flex-direction:column;
@@ -405,6 +406,8 @@
     $('npFull').className = m.fs ? 'on' : '';
     if (m.d > 0) { $('npBar').max = Math.floor(m.d); $('npD').textContent = fmt(m.d); }
     renderSpeed();
+    // Live streams never end: "End" is only offered for videos with a duration (as on the TV).
+    $('npSleepMenu').querySelector('[data-sleep="-1"]').disabled = !(m.d > 0) && sleep.mode !== -1;
     tick();
   }
   // ---- Speed chip (cycles) and sleep timer chip (small menu); allowlists match RemoteInput on the TV ----

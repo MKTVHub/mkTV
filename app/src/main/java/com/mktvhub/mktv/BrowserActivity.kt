@@ -993,6 +993,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun openShortcuts() {
+        closeControls() // e.g. the phone's Home key while the playback controls are open
         menuScroll.visibility = View.GONE
         shieldPanel.visibility = View.GONE
         if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
@@ -2694,7 +2695,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         webView.evaluateJavascript("window.__sp && __sp.fill ? __sp.fill() : null") { res ->
             if (res?.trim('"') != "fill" || customView != null) return@evaluateJavascript
             filling = true
-            // Watch mode owns the keys: OK / Play-Pause toggle, ◀ ▶ seek, ▲ or Back exit.
+            // Watch mode owns the keys: OK / Play-Pause toggle, ◀ ▶ seek, ▲ playback controls, Back exit.
             if (!watching) enterWatch(false) else showDock()
             cursor.showRing(null)
             hideBar()
