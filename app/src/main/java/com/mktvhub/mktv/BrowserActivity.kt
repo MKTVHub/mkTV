@@ -1885,10 +1885,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         prefs.remoteEnabled = true
         startRemote()
         val url = remoteServer.url()
-        val steps = findViewById<TextView>(R.id.remoteSteps)
         val qr = findViewById<android.widget.ImageView>(R.id.remoteQr)
+        remoteHelpShown = false
+        findViewById<TextView>(R.id.remoteHelpBtn).text = "Help"
+        findViewById<TextView>(R.id.remoteTitle).text = "Phone remote"
+        findViewById<View>(R.id.remoteUrl).visibility = View.VISIBLE
         if (url == null || !remoteServer.running) {
-            steps.text = "Couldn't start the phone remote. Make sure the TV is connected to Wi-Fi or Ethernet."
+            remoteRows(listOf("Couldn't start the phone remote" to "Make sure the TV is connected to Wi-Fi or Ethernet, then open Phone remote again."), numbered = false)
             qr.setImageDrawable(null)
             findViewById<TextView>(R.id.remoteUrl).text = ""
         } else {
@@ -1899,8 +1902,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             qr.setImageBitmap(qrBitmap(url, dp(240)))
         }
         findViewById<View>(R.id.remoteWifi).setOnClickListener { showShareWifi(fromRemote = true) }
+        findViewById<View>(R.id.remoteHelpBtn).setOnClickListener { toggleRemoteHelp() }
+        // Only two buttons in the panel: keep ▲▼◀▶ between them instead of escaping to the Home screen behind.
+        val help = findViewById<View>(R.id.remoteHelpBtn); val share = findViewById<View>(R.id.remoteWifi)
+        listOf(help, share).forEach { it.nextFocusUpId = it.id; it.nextFocusDownId = it.id }
+        help.nextFocusLeftId = help.id; help.nextFocusRightId = share.id
+        share.nextFocusLeftId = help.id; share.nextFocusRightId = share.id
         remotePanel.visibility = View.VISIBLE
-        onOverlayChanged(findViewById(R.id.remoteWifi))
+        onOverlayChanged(findViewById(R.id.remoteHelpBtn))
     }
 
     /** Step 1 names the TV's Wi-Fi, so homes with several networks pick the right one. */
@@ -1908,11 +1917,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val ssid = currentSsid()
         val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
         val wired = cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) == true
-        val step1 = when {
-            ssid != null -> "1. Connect your phone to the Wi-Fi “$ssid” (the TV is on it)."
-            wired -> "1. Connect your phone to the Wi-Fi of the router this TV is plugged into."
-            hasLocation() && !locationOn() -> "1. Connect your phone to the same Wi-Fi as this TV. Turn on Location in the TV's settings to see its name here."
-            else -> "1. Connect your phone to the same Wi-Fi as this TV."
+        val wifiLine = when {
+            ssid != null -> "“$ssid”, the network this TV is on"
+            wired -> "The Wi-Fi of the router this TV is plugged into"
+            hasLocation() && !locationOn() -> "The same Wi-Fi as this TV (turn on Location in TV settings to show its name)"
+            else -> "The same Wi-Fi as this TV"
         }
         // Most VPNs (NordVPN, Proton, ...) leave the home network alone and the remote just works. Warn only when
         // the VPN's routes swallow this TV's own subnet, so replies to the phone would vanish into the tunnel.
@@ -1921,8 +1930,59 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             cm.getNetworkCapabilities(n)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true &&
                 cm.getLinkProperties(n)?.routes?.any { it.matches(lanIp) } == true
         }
-        findViewById<TextView>(R.id.remoteSteps).text = "$step1\n2. Scan this code with the phone's camera.\n3. Use the remote and keyboard in your phone's browser." +
-            if (vpn) "\n\n⚠ The VPN on this TV is routing your home network through its tunnel, so phones can't reach it. In the VPN app, allow LAN / local network access, or exclude mkTV." else ""
+        if (remoteHelpShown) renderRemoteHelp() else remoteRows(listOf(
+            "Join the Wi-Fi" to wifiLine,
+            "Scan this code" to "With your phone's camera",
+            "Use your phone as the remote" to "In its browser. Bookmark the page: it stays paired.",
+        ), numbered = true)
+        findViewById<TextView>(R.id.remoteWarn).apply {
+            text = "⚠ This TV's VPN routes your home network through its tunnel, so phones can't reach it. Allow LAN access in the VPN app, or exclude mkTV."
+            visibility = if (vpn) View.VISIBLE else View.GONE
+        }
+    }
+
+    private var remoteHelpShown = false
+
+    /** Help swaps the steps for the fixes people actually need; Help again (or Back) shows the steps. */
+    private fun toggleRemoteHelp() {
+        remoteHelpShown = !remoteHelpShown
+        findViewById<TextView>(R.id.remoteHelpBtn).text = if (remoteHelpShown) "Steps" else "Help"
+        findViewById<TextView>(R.id.remoteTitle).text = if (remoteHelpShown) "Phone can't open it?" else "Phone remote"
+        findViewById<View>(R.id.remoteUrl).visibility = if (remoteHelpShown) View.GONE else View.VISIBLE // help lists it
+        if (remoteHelpShown) renderRemoteHelp() else renderRemoteSteps()
+    }
+
+    private fun renderRemoteHelp() {
+        val url = remoteServer.url().orEmpty()
+        remoteRows(listOf(
+            "Browser switched to https://" to "Tap “Continue to site”. In Chrome: Settings → Privacy and security → Always use secure connections → off. A private tab works too.",
+            "Same Wi-Fi, not a guest network" to "Phone and TV must be on the same network. Guest Wi-Fi blocks devices from each other.",
+            "VPN or ad blocker on the phone" to "Pause it, or allow LAN / local network access in it.",
+            "Type it instead" to url.ifEmpty { "Open Phone remote again to see the address" },
+        ), numbered = false)
+    }
+
+    /** One row per step: a numbered (or •) badge, a bold line and a quieter detail line. */
+    private fun remoteRows(rows: List<Pair<String, String>>, numbered: Boolean) {
+        val box = findViewById<LinearLayout>(R.id.remoteSteps)
+        box.removeAllViews()
+        rows.forEachIndexed { i, (title, detail) ->
+            box.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, if (i == 0) 0 else dp(if (numbered) 14 else 10), 0, 0)
+                addView(TextView(context).apply {
+                    text = if (numbered) "${i + 1}" else "•"
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(android.graphics.Color.WHITE); textSize = 15f
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    if (numbered) background = android.graphics.drawable.GradientDrawable(
+                        android.graphics.drawable.GradientDrawable.Orientation.TL_BR, intArrayOf(0xFF7C3AED.toInt(), 0xFFDB2777.toInt()),
+                    ).apply { shape = android.graphics.drawable.GradientDrawable.OVAL }
+                }, LinearLayout.LayoutParams(dp(30), dp(30)))
+                addView(textBlock(title, detail).apply { setPadding(dp(14), dp(2), 0, 0) },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            })
+        }
     }
 
     private fun closePhoneRemote() {
@@ -2954,6 +3014,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             suggestOpen() -> hideSuggestions()
             wifiPanel.visibility == View.VISIBLE && currentFocus is EditText -> { hideKeyboard(currentFocus as EditText); wifiPanel.requestFocus() }
             wifiPanel.visibility == View.VISIBLE -> closeShareWifi()
+            remotePanel.visibility == View.VISIBLE && remoteHelpShown -> toggleRemoteHelp()
             remotePanel.visibility == View.VISIBLE -> closePhoneRemote()
             menuOpen() && inSubMenu -> { inSubMenu = false; buildMenu(); firstMenuItem()?.requestFocus() }
             menuOpen() -> closeMenu()
