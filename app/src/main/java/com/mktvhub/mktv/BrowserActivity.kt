@@ -280,7 +280,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
         // Downloads: confirm, then DownloadManager with this WebView's (possibly private) cookies, its user agent and the page as Referer.
         wv.setDownloadListener { url, ua, disposition, mime, length ->
-            val cookie = if (url.startsWith("http")) runCatching { cookieManagerFor(isPrivate).getCookie(url) }.getOrNull() else null
+            // Without profiles the private session has no cookie jar of its own: send none rather than the normal ones.
+            val cookie = if (url.startsWith("http") && (!isPrivate || multiProfile)) runCatching { cookieManagerFor(isPrivate).getCookie(url) }.getOrNull() else null
             downloads.offer(wv, isPrivate, url, ua, disposition, mime, length, cookie)
         }
 
@@ -757,16 +758,19 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private var snackOnAction: (() -> Unit)? = null
+    /** Only download notices can be reached with ▼, so a stray press can't "Open anyway" a blocked ad. */
+    private var snackReachable = false
     private val hideSnack = Runnable { hideSnackbar() }
 
     /** Shows what was blocked, with "Open anyway" when there is a URL to open. Any thread. */
     private fun showBlocked(message: String, url: String?) = runOnUiThread {
-        showSnack(R.drawable.ic_shield_on, message, "Open anyway", url?.let { u -> { bypassOnce = u; load(u) } })
+        showSnack(R.drawable.ic_shield_on, message, "Open anyway", action = url?.let { u -> { bypassOnce = u; load(u) } })
     }
 
-    /** Bottom notice with an optional action button. ▼ at the bottom of a page (jump mode) reaches the button. */
-    private fun showSnack(icon: Int, message: String, actionLabel: String, action: (() -> Unit)?) {
+    /** Bottom notice with an optional action button; if [reachable], ▼ at the bottom of a page (jump mode) reaches it. */
+    private fun showSnack(icon: Int, message: String, actionLabel: String, reachable: Boolean = false, action: (() -> Unit)?) {
         snackOnAction = action
+        snackReachable = reachable
         findViewById<android.widget.ImageView>(R.id.snackIcon).setImageResource(icon)
         findViewById<TextView>(R.id.snackText).text = message
         findViewById<TextView>(R.id.snackAction).apply { text = actionLabel; visibility = if (action != null) View.VISIBLE else View.GONE }
@@ -1427,7 +1431,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             override fun note(msg: String) = this@BrowserActivity.note(msg)
             override fun panelOpen() = downloadsPanel.visibility == View.VISIBLE
             override fun downloaded(e: Downloads.Entry) {
-                if (downloadsPanel.visibility != View.VISIBLE) showSnack(R.drawable.ic_download, "Downloaded ${e.name}", "Open") { downloads.open(e) }
+                if (downloadsPanel.visibility != View.VISIBLE) showSnack(R.drawable.ic_download, "Downloaded ${e.name}", "Open", reachable = true) { downloads.open(e) }
             }
         })
     }
@@ -2676,8 +2680,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
             if (obj.has("edge")) {
                 if (obj.getString("edge") == "up") { showBar(autoHide = false); focusToolbarNear(cursor.ringCenter()?.x ?: root.width / 2f) }
-                // ▼ past the end of the page reaches the bottom notice's button ("Open anyway", "Open").
-                else if (obj.getString("edge") == "down") findViewById<View>(R.id.snackAction).takeIf { snackbar.visibility == View.VISIBLE && it.visibility == View.VISIBLE }?.requestFocus()
+                // ▼ past the end of the page reaches a download notice's Open button.
+                else if (obj.getString("edge") == "down") findViewById<View>(R.id.snackAction).takeIf { snackReachable && snackbar.visibility == View.VISIBLE && it.visibility == View.VISIBLE }?.requestFocus()
                 return@evaluateJavascript
             }
             showRingFor(obj)

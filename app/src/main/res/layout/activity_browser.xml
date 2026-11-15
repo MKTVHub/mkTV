@@ -213,20 +213,27 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- Overflow menu (like a phone browser's ⋮ menu) -->
-    <LinearLayout
-        android:id="@+id/menuPanel"
+    <!-- Overflow menu (like a phone browser's ⋮ menu). Scrolls on short (540dp) TV screens so every row stays visible. -->
+    <ScrollView
         android:layout_width="360dp"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
         android:layout_marginTop="60dp"
         android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
         android:background="@drawable/panel_bg"
-        android:clickable="true"
         android:elevation="16dp"
-        android:orientation="vertical"
-        android:padding="8dp"
-        android:visibility="gone" />
+        android:focusable="false"
+        android:scrollbars="none">
+        <LinearLayout
+            android:id="@+id/menuPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:orientation="vertical"
+            android:padding="8dp"
+            android:visibility="gone" />
+    </ScrollView>
 
     <!-- Address-bar suggestions: placed under the address field in code -->
     <LinearLayout

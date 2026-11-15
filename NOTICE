@@ -14,6 +14,11 @@ ZXing core (com.google.zxing:core), used to draw the phone remote QR code
 Copyright ZXing authors
 Licensed under the Apache License, Version 2.0.
 
+Material Design icons (https://github.com/google/material-design-icons), path data
+used in some res/drawable/ic_*.xml vector icons (for example ic_download, ic_history)
+Copyright Google LLC
+Licensed under the Apache License, Version 2.0.
+
 Kotlin Standard Library
 Copyright JetBrains s.r.o. and Kotlin Programming Language contributors
 Licensed under the Apache License, Version 2.0.
