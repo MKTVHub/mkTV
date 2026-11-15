@@ -1618,18 +1618,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }.getOrDefault(emptyList())
 
     /** Saved favicon if we have one, otherwise a coloured letter avatar. */
-    private fun siteAvatar(url: String, title: String): View {
+    private fun siteAvatar(url: String, title: String, decode: Boolean = true): View {
         val d = resources.displayMetrics.density
-        val icon = faviconFile(Uri.parse(url).host)?.takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }
-        if (icon != null) {
-            return android.widget.ImageView(this).apply {
-                setImageBitmap(icon)
-                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 14 * d; setColor(android.graphics.Color.WHITE) }
-                val pad = (10 * d).toInt(); setPadding(pad, pad, pad, pad)
-                clipToOutline = true
-            }
-        }
+        val icon = if (!decode) null else faviconFile(Uri.parse(url).host)?.takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }
+        if (icon != null) return iconAvatar(icon)
         val site = HostRules.siteOf(Uri.parse(url).host) ?: title
         val palette = intArrayOf(0xFF6366F1.toInt(), 0xFF0EA5E9.toInt(), 0xFF10B981.toInt(), 0xFFF59E0B.toInt(), 0xFFEF4444.toInt(), 0xFFA855F7.toInt(), 0xFFEC4899.toInt())
         return TextView(this).apply {
@@ -1643,6 +1635,32 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 setColor(palette[Math.floorMod(site.hashCode(), palette.size)])
             }
         }
+    }
+
+    private fun iconAvatar(icon: Bitmap): View = android.widget.ImageView(this).apply {
+        val d = resources.displayMetrics.density
+        setImageBitmap(icon)
+        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 14 * d; setColor(android.graphics.Color.WHITE) }
+        val pad = (10 * d).toInt(); setPadding(pad, pad, pad, pad)
+        clipToOutline = true
+    }
+
+    private val iconDecoder by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+
+    /** Letter avatar at once; the saved icon replaces it once decoded off the main thread. */
+    private fun asyncSiteAvatar(url: String, title: String): View {
+        val box = FrameLayout(this)
+        box.addView(siteAvatar(url, title, decode = false), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val file = faviconFile(Uri.parse(url).host)?.takeIf { it.exists() } ?: return box
+        iconDecoder.execute {
+            val bmp = runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull() ?: return@execute
+            box.post {
+                box.removeAllViews()
+                box.addView(iconAvatar(bmp), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+        }
+        return box
     }
 
     /** One icon per host (minus "www."), so youtube.com and music.youtube.com keep their own icons. */
@@ -1674,9 +1692,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     // ---- Continue watching: where long videos were left (pure rules in ContinueWatching.kt, launcher rows in TvHome.kt) ----
 
-    /** What Home shows: nothing in private browsing, when the section is hidden or the setting is off. */
+    /** What Home shows (two rows at most): nothing in private browsing, when the section is hidden or the setting is off. */
     private fun continueList(): List<ContinueWatching.Entry> =
-        if (inPrivate || "cw" in prefs.hiddenSections || !prefs.rememberWatching) emptyList() else prefs.continueWatching
+        if (inPrivate || "cw" in prefs.hiddenSections || !prefs.rememberWatching) emptyList() else prefs.continueWatching.take(10)
 
     /** Site icon, title, a thin progress bar and the time left. In Edit, OK removes it. */
     private fun continueTile(e: ContinueWatching.Entry): View {
@@ -1693,7 +1711,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             gravity = android.view.Gravity.CENTER
             setPadding(dp(14), dp(12), dp(14), dp(12))
         }
-        col.addView(siteAvatar(e.url, e.title), LinearLayout.LayoutParams(dp(44), dp(44)))
+        col.addView(asyncSiteAvatar(e.url, e.title), LinearLayout.LayoutParams(dp(44), dp(44)))
         col.addView(TextView(this).apply {
             text = e.title; setTextColor(android.graphics.Color.WHITE); textSize = 15f
             gravity = android.view.Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
@@ -2360,7 +2378,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 tabs.filter { t -> !t.isPrivate }.mapNotNull { t -> t.webView }.forEach { w -> CookieManager.getInstance().setAcceptThirdPartyCookies(w, !it) }
                 settingsDirty = true
             })
-            card.addView(toggleRow("Remember where I stopped watching", "Keeps your place in videos over 3 minutes for Continue watching on Home and the TV's Play Next row. Never in private browsing. Off also forgets the list.",
+            card.addView(toggleRow("Remember where I stopped watching", "Keeps your place in videos over 3 minutes for Continue watching on Home. On Android TV they also appear in the Play Next row, and with your Favourites in a mkTV channel on the TV home screen. Never in private browsing. Off forgets the list and removes the TV home screen cards.",
                 prefs.rememberWatching) {
                 prefs.rememberWatching = it
                 if (!it) clearContinueWatching()

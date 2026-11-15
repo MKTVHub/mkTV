@@ -58,13 +58,8 @@ object TvHome {
         }
         if (sig == lastSig) return
         val published = runCatching { JSONObject(prefs.tvPublished ?: "{}") }.getOrDefault(JSONObject())
-        val gone = syncWatchNext(ctx, entries, published)
-        if (gone.isNotEmpty()) {
-            // Removed from Play Next on the TV home screen: forget it here too, and don't put it back.
-            prefs.continueWatching = prefs.continueWatching.filterNot { ContinueWatching.key(it.url) in gone }
-        }
-        val shown = entries.filterNot { ContinueWatching.key(it.url) in gone }
-        syncChannel(ctx, prefs, shown, favs, published, foreground, on)
+        syncWatchNext(ctx, entries, published)
+        syncChannel(ctx, prefs, entries, favs, published, foreground, on)
         prefs.tvPublished = published.toString()
         lastSig = sig
     }
@@ -77,32 +72,43 @@ object TvHome {
     /** A raster drawable: launchers load poster art by URI and often can't draw vector XML. Site icons live in mkTV's private files. */
     private fun poster(ctx: Context) = Uri.parse("android.resource://${ctx.packageName}/drawable/banner")
 
-    /** Returns the keys of cards the user removed from Play Next. */
-    private fun syncWatchNext(ctx: Context, entries: List<ContinueWatching.Entry>, published: JSONObject): Set<String> {
+    /**
+     * Play Next follows Continue watching one way only: a card the user (or the launcher) removed is not put back
+     * until that video is watched again, and the in-app list is never changed from here.
+     */
+    private fun syncWatchNext(ctx: Context, entries: List<ContinueWatching.Entry>, published: JSONObject) {
         val cr = ctx.contentResolver
         val map = published.optJSONObject("wn") ?: JSONObject()
+        /** Removed cards: entry key → its last-watched time when the card went. */
+        val dismissed = published.optJSONObject("wnx") ?: JSONObject()
         // No WHERE clauses allowed: read all our rows (the provider only returns this app's).
         val rows = HashMap<Long, WatchNextProgram>()
-        cr.query(TvContractCompat.WatchNextPrograms.CONTENT_URI, null, null, null, null)?.use { c ->
-            while (c.moveToNext()) WatchNextProgram.fromCursor(c).let { rows[it.id] = it }
-        }
-        val gone = HashSet<String>()
+        val cursor = cr.query(TvContractCompat.WatchNextPrograms.CONTENT_URI, null, null, null, null) ?: return // provider unavailable: try again later
+        cursor.use { c -> while (c.moveToNext()) WatchNextProgram.fromCursor(c).let { rows[it.id] = it } }
         val wanted = entries.associateBy { ContinueWatching.key(it.url) }
         for (key in map.keys().asSequence().toList()) {
             val id = map.optLong(key, -1)
             val row = rows[id]
             when {
-                row == null -> { if (key in wanted) gone += key; map.remove(key) }
-                !row.isBrowsable -> { if (key in wanted) gone += key; delete(ctx, TvContractCompat.buildWatchNextProgramUri(id)); map.remove(key) }
+                row == null || !row.isBrowsable -> {
+                    wanted[key]?.let { dismissed.put(key, it.time) }
+                    if (row != null) delete(ctx, TvContractCompat.buildWatchNextProgramUri(id))
+                    map.remove(key)
+                }
                 key !in wanted -> { delete(ctx, TvContractCompat.buildWatchNextProgramUri(id)); map.remove(key) }
             }
+        }
+        // Forget dismissals of entries that are gone, or that were watched again since.
+        for (key in dismissed.keys().asSequence().toList()) {
+            val e = wanted[key]
+            if (e == null || e.time > dismissed.optLong(key)) dismissed.remove(key)
         }
         // Rows of ours that no mapping knows (e.g. app data cleared): remove them.
         val known = map.keys().asSequence().map { map.optLong(it) }.toSet()
         rows.keys.filter { it !in known }.forEach { delete(ctx, TvContractCompat.buildWatchNextProgramUri(it)) }
 
         wanted.forEach { (key, e) ->
-            if (key in gone) return@forEach
+            if (dismissed.has(key)) return@forEach
             val values = WatchNextProgram.Builder()
                 .setWatchNextType(TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE)
                 .setType(TvContractCompat.WatchNextPrograms.TYPE_CLIP)
@@ -122,17 +128,19 @@ object TvHome {
                 ?.let { map.put(key, ContentUris.parseId(it)) }
         }
         published.put("wn", map)
-        return gone
+        published.put("wnx", dismissed)
     }
 
     private fun syncChannel(ctx: Context, prefs: Prefs, entries: List<ContinueWatching.Entry>, favs: List<Pair<String, String>>,
                             published: JSONObject, foreground: Boolean, on: Boolean) {
         val cr = ctx.contentResolver
-        var channelId = prefs.tvChannelId
-        val exists = channelId >= 0 && runCatching {
-            cr.query(TvContractCompat.buildChannelUri(channelId), null, null, null, null)?.use { it.moveToFirst() } == true
-        }.getOrDefault(false)
-        if (!exists) {
+        // Our channel, found by its internal id: the provider keeps it even if mkTV's own data was cleared.
+        val channels = ArrayList<Channel>()
+        val chCursor = cr.query(TvContractCompat.Channels.CONTENT_URI, null, null, null, null) ?: return // provider unavailable: try again later
+        chCursor.use { c -> while (c.moveToNext()) channels += Channel.fromCursor(c) }
+        var channelId = (channels.firstOrNull { it.id == prefs.tvChannelId } ?: channels.firstOrNull { it.internalProviderId == "mktv" })?.id ?: -1
+        if (channelId >= 0 && channelId != prefs.tvChannelId) prefs.tvChannelId = channelId
+        if (channelId < 0) {
             // Only made once there is something to show, and only while mkTV is on screen.
             if (!on || !foreground || (entries.isEmpty() && favs.isEmpty())) return
             val channel = Channel.Builder()
@@ -152,9 +160,8 @@ object TvHome {
         val dismissed = (published.optJSONArray("ppx") ?: JSONArray()).let { a -> (0 until a.length()).map { a.optString(it) }.toMutableSet() }
         val map = published.optJSONObject("pp") ?: JSONObject()
         val rows = HashMap<Long, PreviewProgram>()
-        cr.query(TvContractCompat.PreviewPrograms.CONTENT_URI, null, null, null, null)?.use { c ->
-            while (c.moveToNext()) PreviewProgram.fromCursor(c).let { if (it.channelId == channelId) rows[it.id] = it }
-        }
+        val cursor = cr.query(TvContractCompat.PreviewPrograms.CONTENT_URI, null, null, null, null) ?: return
+        cursor.use { c -> while (c.moveToNext()) PreviewProgram.fromCursor(c).let { if (it.channelId == channelId) rows[it.id] = it } }
         for (key in map.keys().asSequence().toList()) {
             val row = rows[map.optLong(key, -1)]
             if (row == null || !row.isBrowsable) dismissed += key
