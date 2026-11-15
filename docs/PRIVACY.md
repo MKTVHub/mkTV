@@ -11,6 +11,8 @@ In normal mode, in the app's private storage (`/data/data/com.mktvhub.mktv`):
 | Settings (home page, toggles, navigation mode, which filter lists are on, lists you added by address, search engine) | `SharedPreferences` file `browser` | Uninstall / Android "Clear storage" |
 | Favourites (title + URL) | same | Removing them on the home screen (Edit) |
 | Recently visited (up to 12 entries: title + URL, one per site) | same | Clear browsing data (History) |
+| Continue watching (up to 20 videos of 3 min or more: page URL, title, host name, position, length, when you last watched) | same | Edit → ✕ on Home, Settings → Privacy → Clear Continue watching or turning off "Remember where I stopped watching", Clear browsing data (History) |
+| TV home screen bookkeeping (the mkTV channel's id, and which launcher card belongs to which page) | same | Rewritten whenever the cards change; uninstall |
 | History (up to 500 entries: title, URL, time) | `SharedPreferences` file `history` | Clear browsing data (History, or Settings → Browsing), History → Clear history, Remove on a row |
 | Update check result (latest version number, its download URL and size, time of the last check, a version you chose "Later" for) | `SharedPreferences` file `browser` | Uninstall / "Clear storage" |
 | A downloaded update (`mkTV-<version>.apk`) | `cache/updates/` | Replaced by the next download; Android may clear app caches |
@@ -22,6 +24,8 @@ In normal mode, in the app's private storage (`/data/data/com.mktvhub.mktv`):
 | Site icons (one PNG per site you visited or saved, and for the Popular tiles) | `files/icons/` | Uninstall / "Clear storage" only |
 | Downloaded filter lists (one file per list that is or was on) | `files/lists/<id>.txt` | Replaced on refresh; deleted when you remove a list you added |
 | Cookies, cache, local storage, IndexedDB, back/forward history | WebView's own storage | Clear browsing data |
+
+**TV home screen (Android TV).** While "Remember where I stopped watching" is on, mkTV hands the title, host name, address, position and length of each Continue watching video to the system TV provider, which the launcher reads to show them in **Play Next** and the **mkTV** channel (the channel also lists your Favourites' titles and addresses). This stays on the TV but is outside mkTV's own storage: the launcher and the system keep it until mkTV removes it (when an entry finishes, is removed or cleared, or the setting is turned off) or you uninstall mkTV. Nothing from private browsing is ever saved or handed over.
 
 `android:allowBackup` is currently `true`, so Android's device backup may include the settings and history files with favourites, recents and history.
 
@@ -62,7 +66,7 @@ When the TV's WebView supports multiple profiles (`MULTI_PROFILE`, most up-to-da
 
 - Private pages use a separate WebView profile with its own cookies, local storage, IndexedDB, cache and history.
 - When you close private browsing, or the app closes, every private tab's WebView is destroyed and the profile is deleted. Open tabs (private or not) are kept in memory only, never written to storage. A leftover profile from a crash or force-stop is deleted at the next launch.
-- Nothing from the session is written to mkTV's own storage: no recents, no site icons, no favourites unless you add one on purpose (adding a favourite in private mode saves it permanently).
+- Nothing from the session is written to mkTV's own storage: no recents, no Continue watching, no site icons, no favourites unless you add one on purpose (adding a favourite in private mode saves it permanently).
 - Third-party cookies are refused, ad and tracker blocking stays on, and tracking parameters are stripped.
 - **Downloads.** The prompt says when you are in private browsing. A downloaded file is saved like any other and **stays on the TV** after private browsing closes (that's usually why you downloaded it); delete it in Downloads before closing if you don't want to keep it. Private downloads are listed in Downloads (marked "Private") only while the session lasts: they are kept in memory, never written to mkTV's storage, and disappear from the list when private browsing closes.
 - Release builds set `FLAG_SECURE`, which keeps private pages out of the Recents screen thumbnails and screenshots. Debug builds do not, for testing.

@@ -295,6 +295,15 @@
 
                 <TextView android:id="@+id/privateInfo" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="20dp" android:background="@drawable/private_card" android:lineSpacingExtra="4dp" android:padding="20dp" android:textColor="#FFE9E5FF" android:textSize="15sp" android:visibility="gone" />
 
+                <LinearLayout android:id="@+id/cwSection" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingTop="22dp" android:paddingBottom="14dp">
+                    <TextView style="@style/SectionTitle" android:layout_width="0dp" android:layout_weight="1" android:paddingTop="0dp" android:paddingBottom="0dp" android:text="CONTINUE WATCHING" />
+                    <TextView android:id="@+id/cwEdit" android:layout_width="wrap_content" android:drawableStart="@drawable/ic_edit" android:drawablePadding="8dp" android:layout_height="36dp" android:background="@drawable/toolbar_button" android:clickable="true" android:focusable="true" android:gravity="center" android:paddingStart="16dp" android:paddingEnd="16dp" android:text="Edit" android:textColor="#FFFFFFFF" android:textSize="14sp" />
+                </LinearLayout>
+                <LinearLayout android:id="@+id/cwTools" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="12dp" android:orientation="horizontal" android:visibility="gone" />
+                <GridLayout android:id="@+id/cwGrid" android:layout_width="match_parent" android:layout_height="wrap_content" android:columnCount="5" />
+                </LinearLayout>
+
                 <LinearLayout android:id="@+id/popularSection" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingTop="22dp" android:paddingBottom="14dp">
                     <TextView style="@style/SectionTitle" android:layout_width="0dp" android:layout_weight="1" android:paddingTop="0dp" android:paddingBottom="0dp" android:text="POPULAR" />

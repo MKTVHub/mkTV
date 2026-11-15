@@ -28,7 +28,7 @@ build.gradle.kts          Plugin versions (AGP 8.7.3, Kotlin 2.0.21)
 settings.gradle.kts       Single module :app
 app/build.gradle.kts      SDK levels, BuildConfig fields, dependencies
 app/src/main/
-  AndroidManifest.xml     Two activities, INTERNET + ACCESS_NETWORK_STATE + REQUEST_INSTALL_PACKAGES (updates), FileProvider, speech <queries>, leanback launcher
+  AndroidManifest.xml     Two activities, INTERNET + ACCESS_NETWORK_STATE + REQUEST_INSTALL_PACKAGES (updates) + WRITE_EPG_DATA (TV home screen), FileProvider, speech and TV provider <queries>, leanback launcher
   java/com/mktvhub/mktv/
     BrowserActivity.kt    The whole browser shell (see regions below)
     CursorView.kt         Native overlay: pointer arrow (pointer mode) and focus ring (jump mode)
@@ -45,6 +45,8 @@ app/src/main/
     Tabs.kt               Tab state + pure TabPolicy (live WebView limit, close order, low-memory rule)
     Downloads.kt          Pure: download file names, Content-Disposition, sizes, data: URLs, the saved Downloads list
     DownloadCenter.kt     Downloads: confirm prompt, DownloadManager, data:/blob: saving, status polling, Open/Delete, Downloads panel rows
+    ContinueWatching.kt   Pure: Continue watching rules (what to save, finished, resume offer), labels, JSON; HomeSections.merge (Home section order)
+    TvHome.kt             Android TV home screen: Continue watching in Play Next (Watch Next) and a mkTV channel, via androidx.tvprovider, off the main thread
     Prefs.kt              SharedPreferences wrapper: every user setting, favourites, recents, history, counters, update state
     PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page
     RemoteServer.kt       Phone remote: tiny LAN HTTP server with a pairing token (see docs/PHONE_REMOTE.md)
@@ -56,7 +58,7 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates and Android 7–9 downloads)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest, ContinueWatchingTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):
@@ -67,7 +69,7 @@ app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterLists
 | `// ---- Private browsing ----` | `enterPrivate` / `exitPrivate`, WebView profile handling |
 | `// ---- Tabs` | `showTab`, `discardTab`, `closeTab`, `openInNewTab`, `onTrimMemory` (the switcher is `showTabsMenu` in the ⋮ menu) |
 | `// region Toolbar` | Toolbar buttons, `submitAddress`, address-bar suggestions, voice search, shield badge and panel, per-site pause, blocked snackbar, stream button and picker, `playNative` |
-| `// region Shortcuts` | Home screen: Popular, Favourites, Recently visited, tiles, favicons; the History page; in-app updates (check, home card, download, install) |
+| `// region Shortcuts` | Home screen: Continue watching (and its sampling, resume notice), Popular, Favourites, Recently visited, tiles, favicons; the History page; in-app updates (check, home card, download, install) |
 | `// region Settings` | Settings screen built in code (`section`, `toggleRow`, `actionRow`, `fieldRow`, `segmented`) |
 | `// region Remote control → cursor` | Phone remote panel and `RemoteServer.Listener` callbacks (`onKey`, `onText`, `onOpen`, `state`), ⋮ menu, clear-data submenu, focus/overlay rules, `dispatchKeyEvent`, YouTube TV passthrough, jump mode, pointer touch/scroll synthesis, auto-hiding bar, watch mode, dock, playback controls and sleep timer, `onBackPressed` |
 | `// region Helpers` | `normalizeInput`, keyboard, system bars, toasts, lifecycle |
@@ -122,7 +124,7 @@ Debug builds do not set `FLAG_SECURE`, so screenshots work in private mode too.
 ## Coding conventions (as observed in the code)
 
 - Kotlin, plain `Activity` (no AppCompat, no Fragments, no Compose, no DI). Views come from one XML layout; panels such as Settings and the ⋮ menu are built in code.
-- Small dependency set: `androidx.core`, `androidx.webkit`, Media3, ZXing core (QR code); tests add JUnit and `org.json` (the Android jar only has stubs of it). Adding a dependency needs a clear reason.
+- Small dependency set: `androidx.core`, `androidx.webkit`, `androidx.tvprovider` (TV home screen), Media3, ZXing core (QR code); tests add JUnit and `org.json` (the Android jar only has stubs of it). Adding a dependency needs a clear reason.
 - Keep pure logic in `HostRules`, `WebSearch`, `History` or `Updates` (no Android imports beyond `org.json`) so it can be unit-tested on the JVM.
 - Every user setting is a property on `Prefs` with a default in the getter. Settings save as they change; closing Settings reloads the page if `settingsDirty`.
 - All app-initiated navigation goes through `load()` so the right user agent is set first.

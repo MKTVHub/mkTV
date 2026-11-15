@@ -61,6 +61,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:$media3")
     implementation("androidx.media3:media3-ui:$media3")
     implementation("com.google.zxing:core:3.5.3")
+    // TV home screen: Watch Next ("Play Next") cards and the mkTV channel (TvHome.kt).
+    implementation("androidx.tvprovider:tvprovider:1.0.0")
     testImplementation("junit:junit:4.13.2")
     // Real org.json for JVM tests (the Android jar only has stubs); the app uses the platform copy.
     testImplementation("org.json:json:20240303")

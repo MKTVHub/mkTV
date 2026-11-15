@@ -42,7 +42,9 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `DownloadCenter.kt` | WebView downloads: confirm prompt, system `DownloadManager` (page cookies, user agent, Referer), `data:`/`blob:` saving (blob read in the page and copied out in chunks with `evaluateJavascript`), status polling, Open/Remove/Delete, the Downloads panel rows. Private-mode entries stay in memory |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
 | `RemoteServer.kt` | Phone remote HTTP server (in progress). Raw `ServerSocket`, one thread per connection, token check, calls back into `BrowserActivity` through `RemoteServer.Listener` |
-| `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used |
+| `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used; saves and resumes the Continue watching position under the page's address |
+| `ContinueWatching.kt` | Pure Continue watching rules (save, finished, resume offer, cap), labels and JSON; `HomeSections.merge` for the Home section order |
+| `TvHome.kt` | Publishes Continue watching to the system Watch Next ("Play Next") row and a "mkTV" preview channel (with Favourites) on one background thread; skipped without a TV provider |
 | `page_script.js` | Five IIFEs: cosmetic filters and click-trap sweep (plus GPC), jump-mode engine (`window.__sp`), watch-mode video helpers (same object), page zoom and full-screen fill (adds to `__sp`), auto-unmute |
 | `yt_clean.js` | YouTube-only ad removal |
 

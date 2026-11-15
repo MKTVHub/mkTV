@@ -62,12 +62,9 @@ class Prefs(context: Context) {
             p.edit().putString("popular", arr.toString()).apply()
         }
 
-    /** Home screen section order, e.g. "fav,pop,rec"; unknown or missing ids fall back to the default order. */
+    /** Home screen section order, e.g. "cw,fav,pop,rec"; see [HomeSections.merge] for ids an older saved order lacks. */
     var homeOrder: List<String>
-        get() {
-            val saved = p.getString("home_order", null)?.split(',').orEmpty().filter { it in HOME_SECTIONS }
-            return (saved + HOME_SECTIONS).distinct()
-        }
+        get() = HomeSections.merge(p.getString("home_order", null)?.split(',').orEmpty(), HOME_SECTIONS)
         set(v) = p.edit().putString("home_order", v.joinToString(",")).apply()
     var hiddenSections: Set<String>
         get() = p.getStringSet("hidden_sections", emptySet())!!.toSet()
@@ -175,6 +172,22 @@ class Prefs(context: Context) {
         get() = Downloads.fromJson(p.getString("downloads", null))
         set(v) = p.edit().putString("downloads", Downloads.toJson(v)).apply()
 
+    /** Continue watching: where long videos were left (normal mode only; see [ContinueWatching]). */
+    var continueWatching: List<ContinueWatching.Entry>
+        get() = ContinueWatching.fromJson(p.getString("continue_watching", null))
+        set(v) = p.edit().putString("continue_watching", ContinueWatching.toJson(v)).apply()
+    /** Settings → Privacy "Remember where I stopped watching". */
+    var rememberWatching: Boolean
+        get() = p.getBoolean("remember_watching", true)
+        set(v) = p.edit().putBoolean("remember_watching", v).apply()
+    /** TV home screen (see [TvHome]): our preview channel id and the launcher rows we published, by entry URL. */
+    var tvChannelId: Long
+        get() = p.getLong("tv_channel_id", -1)
+        set(v) = p.edit().putLong("tv_channel_id", v).apply()
+    var tvPublished: String?
+        get() = p.getString("tv_published", null)
+        set(v) = p.edit().putString("tv_published", v).apply()
+
     /** [WebSearch.Engine.id] used for address-bar searches and suggestions. */
     var searchEngine: String
         get() = p.getString("search_engine", null) ?: "google"
@@ -219,7 +232,7 @@ class Prefs(context: Context) {
         set(v) = p.edit().putStringSet("site_speed", PlaybackSpeed.serialize(v)).apply()
 
     companion object {
-        val HOME_SECTIONS = listOf("pop", "fav", "rec")
+        val HOME_SECTIONS = listOf("cw", "pop", "fav", "rec")
         /** Curated Popular row a fresh install starts with. */
         val DEFAULT_POPULAR = listOf(
             "YouTube" to "https://www.youtube.com/tv",

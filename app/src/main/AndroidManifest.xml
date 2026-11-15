@@ -11,11 +11,16 @@
     <!-- In-app updates: hand the downloaded mkTV.apk to the system installer (the user still confirms). -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!-- Package visibility (API 30+): needed to find the TV's speech recogniser for voice search. -->
+    <!-- TV home screen (Continue watching in Play Next and the mkTV channel): the TV provider's documented
+         permission. Ignored where there is no TV provider (phones). -->
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
+
+    <!-- Package visibility (API 30+): the TV's speech recogniser for voice search, and the TV provider. -->
     <queries>
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
         </intent>
+        <provider android:authorities="android.media.tv" />
     </queries>
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />

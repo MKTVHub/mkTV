@@ -257,6 +257,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 cursor.showRing(null)
                 exitWatch(silent = true)
                 watchDismissedFor = null
+                resumeOfferedFor = null; root.removeCallbacks(resumeProbe)
                 showBar()
                 streams.clear()
                 updateShield()
@@ -274,6 +275,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             override fun onPageFinished(view: WebView, url: String) {
                 if (view !== webView) return
                 rememberRecent(view.title, url)
+                startResumeProbe(url)
                 updateStar()
                 scheduleHideBar(3000)
                 if (!docStartScript) view.evaluateJavascript(pageScript, null)
@@ -283,7 +285,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 updateNav()
             }
 
-            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = updateNav()
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                updateNav()
+                // In-page navigation (YouTube and other single-page sites): a new video may have a saved position.
+                if (view === webView && url != resumeOfferedFor) { resumeOfferedFor = null; startResumeProbe(url) }
+            }
         }
 
         // Downloads: confirm, then DownloadManager with this WebView's (possibly private) cookies, its user agent and the page as Referer.
@@ -477,6 +483,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             exitFullscreen(notifyPage = true)
             exitFill() // unfills the old page while webView still points at it
             exitWatch(silent = true)
+            sampleWatching() // reads the old tab: its WebView and URL are captured before the switch
+            root.removeCallbacks(resumeProbe); resumeOfferedFor = null
             old.active = false
             old.webView?.let { it.evaluateJavascript(PAUSE_MEDIA_JS, null); it.onPause() }
         }
@@ -870,23 +878,29 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     /** Bottom notice with an optional action button; if [reachable], ▼ at the bottom of a page (jump mode) reaches it. */
-    private fun showSnack(icon: Int, message: String, actionLabel: String, reachable: Boolean = false, action: (() -> Unit)?) {
+    private fun showSnack(icon: Int, message: String, actionLabel: String, reachable: Boolean = false,
+                          actionIcon: Int = 0, durationMs: Long = 6_000, action: (() -> Unit)?) {
         snackOnAction = action
         snackReachable = reachable
+        resumeOfferUrl = null // a newer notice replaces a resume offer
         findViewById<android.widget.ImageView>(R.id.snackIcon).setImageResource(icon)
         findViewById<TextView>(R.id.snackText).text = message
-        findViewById<TextView>(R.id.snackAction).apply { text = actionLabel; visibility = if (action != null) View.VISIBLE else View.GONE }
+        findViewById<TextView>(R.id.snackAction).apply {
+            text = actionLabel; visibility = if (action != null) View.VISIBLE else View.GONE
+            setCompoundDrawablesRelativeWithIntrinsicBounds(actionIcon, 0, 0, 0); compoundDrawablePadding = dp(8)
+        }
         if (snackbar.visibility != View.VISIBLE) {
             snackbar.alpha = 0f; snackbar.translationY = 40f
             snackbar.visibility = View.VISIBLE
             snackbar.animate().alpha(1f).translationY(0f).setDuration(180).start()
         }
         snackbar.removeCallbacks(hideSnack)
-        snackbar.postDelayed(hideSnack, 6_000)
+        snackbar.postDelayed(hideSnack, durationMs)
     }
 
     private fun hideSnackbar() {
         snackbar.removeCallbacks(hideSnack)
+        resumeOfferUrl = null
         if (isInside(snackbar, currentFocus) && !overlayOpen()) onOverlayChanged(null) // hand the remote back to the page
         snackbar.animate().alpha(0f).setDuration(150).withEndAction { snackbar.visibility = View.GONE }.start()
     }
@@ -931,7 +945,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 .putExtra(PlayerActivity.EXTRA_USER_AGENT, webView.settings.userAgentString)
                 .putExtra(PlayerActivity.EXTRA_COOKIE, cookieManagerFor(inPrivate).getCookie(s.url))
                 .putExtra(PlayerActivity.EXTRA_TITLE, webView.title)
-                .putExtra(PlayerActivity.EXTRA_SPEED, speedFor(webView.url)),
+                .putExtra(PlayerActivity.EXTRA_SPEED, speedFor(webView.url))
+                // Continue watching: under the page's address, never in private browsing.
+                .putExtra(PlayerActivity.EXTRA_PAGE_URL, webView.url)
+                .putExtra(PlayerActivity.EXTRA_REMEMBER, !inPrivate && prefs.rememberWatching && hasPage()),
         )
     }
 
@@ -942,6 +959,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private lateinit var shortcutsPanel: View
     private var editingShortcuts = false
     private var editingPopular = false
+    private var editingContinue = false
     /** Top-level index of the Favourites folder being shown, or -1 for the top level. */
     private var openFolder = -1
     /** Favourite whose actions (rename, move, folder, remove) show under the grid in edit mode. */
@@ -961,6 +979,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.addThisPage).setOnClickListener {
             val url = webView.url.orEmpty()
             addShortcut(webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty(), url)
+        }
+        findViewById<TextView>(R.id.cwEdit).setOnClickListener {
+            editingContinue = !editingContinue
+            renderShortcuts()
+            (if (editingContinue) findViewById<ViewGroup>(R.id.cwGrid).getChildAt(0) else null ?: findViewById(R.id.cwEdit))?.requestFocus()
         }
         findViewById<TextView>(R.id.popularEdit).setOnClickListener {
             editingPopular = !editingPopular
@@ -1001,12 +1024,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         downloadsPanel.visibility = View.GONE
         editingShortcuts = false
         editingPopular = false
+        editingContinue = false
         openFolder = -1
         selectedFav = null
         renderShortcuts()
         shortcutsPanel.visibility = View.VISIBLE
         findViewById<View>(R.id.shortcutsScroll).scrollTo(0, 0)
-        onOverlayChanged(findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0) ?: findViewById(R.id.homeRemote))
+        onOverlayChanged(firstHomeTile() ?: findViewById(R.id.homeRemote))
     }
 
     private fun closeShortcuts() {
@@ -1056,7 +1080,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.popularEmpty).visibility = if (popular.isEmpty() && !editingPopular) View.VISIBLE else View.GONE
         fillGrid(R.id.popularGrid, popular, height = 104, iconSize = 44, kind = "pop")
         renderPopularAdd(popular)
+        val watching = continueList()
+        if (watching.isEmpty()) editingContinue = false
+        findViewById<TextView>(R.id.cwEdit).text = if (editingContinue) "Stop editing" else "Edit"
+        fillGrid(R.id.cwGrid, watching.map { it.title to it.url }, height = 150, iconSize = 44, kind = "cw") { i, _, _ -> continueTile(watching[i]) }
         arrangeHome()
+        // Shown only when there is something to continue (arrangeHome made every section that isn't hidden visible).
+        if (watching.isEmpty()) findViewById<View>(R.id.cwSection).visibility = View.GONE
         renderFavourites(tree, folder)
         val recent = if (inPrivate || "rec" in prefs.hiddenSections) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
         findViewById<View>(R.id.recentTitle).visibility = if (recent.isEmpty()) View.GONE else View.VISIBLE
@@ -1073,17 +1103,28 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             val idx = focusedTag.substringAfter("pop:").substringBefore('|').toIntOrNull() ?: 0
             (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1)) ?: findViewById(R.id.popularEdit)).requestFocus()
         }
+        if (focusedTag != null && focusedTag.startsWith("cw:")) {
+            val grid = findViewById<ViewGroup>(R.id.cwGrid)
+            val idx = focusedTag.substringAfter("cw:").substringBefore('|').toIntOrNull() ?: 0
+            (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1))?.takeIf { it.isShown } ?: firstHomeTile() ?: findViewById(R.id.homeRemote)).requestFocus()
+        }
         if (focusedTag != null && focusedTag.startsWith("favact:"))
             (favActions.findViewWithTag<View>(focusedTag)?.takeIf { it.isFocusable } ?: findViewById<ViewGroup>(R.id.shortcutsGrid).getChildAt(0)
                 ?: findViewById(R.id.shortcutsEdit)).requestFocus()
         if (focusedTag != null && focusedTag.startsWith("sug:"))
             (findViewById<ViewGroup>(R.id.popularSuggest).getChildAt(0) ?: findViewById<View>(R.id.popularAddField)).requestFocus()
-        if (!inPrivate) fetchMissingIcons(popular + favs + recent)
+        if (!inPrivate) fetchMissingIcons(popular + favs + recent + watching.map { it.title to it.url })
     }
 
     /** Edit mode: one-press chips for well-known sites not already in Popular, plus a free address field. */
-    private fun sectionView(id: String): View = findViewById(when (id) { "pop" -> R.id.popularSection; "fav" -> R.id.favSection; else -> R.id.recentSection })
-    private fun sectionName(id: String) = when (id) { "pop" -> "Popular"; "fav" -> "Favourites"; else -> "Recently visited" }
+    private fun sectionView(id: String): View = findViewById(when (id) { "cw" -> R.id.cwSection; "pop" -> R.id.popularSection; "fav" -> R.id.favSection; else -> R.id.recentSection })
+    private fun sectionName(id: String) = when (id) { "cw" -> "Continue watching"; "pop" -> "Popular"; "fav" -> "Favourites"; else -> "Recently visited" }
+    private fun sectionGrid(id: String): ViewGroup = findViewById(when (id) { "cw" -> R.id.cwGrid; "pop" -> R.id.popularGrid; "fav" -> R.id.shortcutsGrid; else -> R.id.recentGrid })
+    private fun sectionEdit(id: String): View = findViewById(when (id) { "cw" -> R.id.cwEdit; "pop" -> R.id.popularEdit; else -> R.id.shortcutsEdit })
+
+    /** First tile of the first section on screen: where Home puts the remote's focus. */
+    private fun firstHomeTile(): View? =
+        prefs.homeOrder.firstNotNullOfOrNull { id -> sectionGrid(id).getChildAt(0)?.takeIf { sectionView(id).visibility == View.VISIBLE } }
 
     /** Puts the sections in the saved order and hides the ones the user turned off. */
     private fun arrangeHome() {
@@ -1094,6 +1135,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         views.forEachIndexed { i, v -> parent.addView(v, at + i) }
         val hidden = prefs.hiddenSections
         prefs.homeOrder.forEach { sectionView(it).visibility = if (it in hidden) View.GONE else View.VISIBLE }
+        renderSectionTools("cw", R.id.cwTools, editingContinue)
         renderSectionTools("pop", R.id.popularTools, editingPopular)
         renderSectionTools("fav", R.id.favTools, editingShortcuts)
     }
@@ -1120,17 +1162,17 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             val o = order.toMutableList(); o.removeAt(pos); o.add(pos + by, id); prefs.homeOrder = o
             renderShortcuts()
             sectionView(id).findViewWithTag<View>("tool:$id:" + if (by < 0) "↑  Move up" else "↓  Move down")?.requestFocus()
-                ?: findViewById<View>(if (id == "pop") R.id.popularEdit else R.id.shortcutsEdit).requestFocus()
+                ?: sectionEdit(id).requestFocus()
         }
         tool("↑  Move up", pos > 0) { move(-1) }
         tool("↓  Move down", pos < order.size - 1) { move(1) }
         tool("＋  New folder", id == "fav" && openFolder < 0) { newFavFolder() }
         tool("Hide ${sectionName(id)}", true) {
             prefs.hiddenSections = prefs.hiddenSections + id
-            if (id == "pop") editingPopular = false else editingShortcuts = false
+            when (id) { "pop" -> editingPopular = false; "cw" -> editingContinue = false; else -> editingShortcuts = false }
             renderShortcuts()
             note("${sectionName(id)} hidden. Show it again in Settings → Start screen")
-            (findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0)?.takeIf { it.isShown } ?: findViewById(R.id.homeRemote)).requestFocus()
+            (firstHomeTile() ?: findViewById(R.id.homeRemote)).requestFocus()
         }
     }
 
@@ -1577,18 +1619,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }.getOrDefault(emptyList())
 
     /** Saved favicon if we have one, otherwise a coloured letter avatar. */
-    private fun siteAvatar(url: String, title: String): View {
+    private fun siteAvatar(url: String, title: String, decode: Boolean = true): View {
         val d = resources.displayMetrics.density
-        val icon = faviconFile(Uri.parse(url).host)?.takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }
-        if (icon != null) {
-            return android.widget.ImageView(this).apply {
-                setImageBitmap(icon)
-                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 14 * d; setColor(android.graphics.Color.WHITE) }
-                val pad = (10 * d).toInt(); setPadding(pad, pad, pad, pad)
-                clipToOutline = true
-            }
-        }
+        val icon = if (!decode) null else faviconFile(Uri.parse(url).host)?.takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.path) }
+        if (icon != null) return iconAvatar(icon)
         val site = HostRules.siteOf(Uri.parse(url).host) ?: title
         val palette = intArrayOf(0xFF6366F1.toInt(), 0xFF0EA5E9.toInt(), 0xFF10B981.toInt(), 0xFFF59E0B.toInt(), 0xFFEF4444.toInt(), 0xFFA855F7.toInt(), 0xFFEC4899.toInt())
         return TextView(this).apply {
@@ -1602,6 +1636,32 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 setColor(palette[Math.floorMod(site.hashCode(), palette.size)])
             }
         }
+    }
+
+    private fun iconAvatar(icon: Bitmap): View = android.widget.ImageView(this).apply {
+        val d = resources.displayMetrics.density
+        setImageBitmap(icon)
+        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+        background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 14 * d; setColor(android.graphics.Color.WHITE) }
+        val pad = (10 * d).toInt(); setPadding(pad, pad, pad, pad)
+        clipToOutline = true
+    }
+
+    private val iconDecoder by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+
+    /** Letter avatar at once; the saved icon replaces it once decoded off the main thread. */
+    private fun asyncSiteAvatar(url: String, title: String): View {
+        val box = FrameLayout(this)
+        box.addView(siteAvatar(url, title, decode = false), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        val file = faviconFile(Uri.parse(url).host)?.takeIf { it.exists() } ?: return box
+        iconDecoder.execute {
+            val bmp = runCatching { android.graphics.BitmapFactory.decodeFile(file.path) }.getOrNull() ?: return@execute
+            box.post {
+                box.removeAllViews()
+                box.addView(iconAvatar(bmp), FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+        }
+        return box
     }
 
     /** One icon per host (minus "www."), so youtube.com and music.youtube.com keep their own icons. */
@@ -1630,6 +1690,156 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         updateStar()
         if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
     }
+
+    // ---- Continue watching: where long videos were left (pure rules in ContinueWatching.kt, launcher rows in TvHome.kt) ----
+
+    /** What Home shows (two rows at most): nothing in private browsing, when the section is hidden or the setting is off. */
+    private fun continueList(): List<ContinueWatching.Entry> =
+        if (inPrivate || "cw" in prefs.hiddenSections || !prefs.rememberWatching) emptyList() else prefs.continueWatching.take(10)
+
+    /** Site icon, title, a thin progress bar and the time left. In Edit, OK removes it. */
+    private fun continueTile(e: ContinueWatching.Entry): View {
+        val tile = FrameLayout(this).apply {
+            setBackgroundResource(R.drawable.tile_bg)
+            isClickable = true; isFocusable = true
+            setOnClickListener {
+                if (editingContinue) removeContinue(e.url)
+                else { closeShortcuts(); load(e.url) }
+            }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        col.addView(asyncSiteAvatar(e.url, e.title), LinearLayout.LayoutParams(dp(44), dp(44)))
+        col.addView(TextView(this).apply {
+            text = e.title; setTextColor(android.graphics.Color.WHITE); textSize = 15f
+            gravity = android.view.Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(0, dp(8), 0, 0)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        col.addView(TextView(this).apply {
+            text = "${ContinueWatching.leftLabel(e)} · ${e.host}"; setTextColor(0xFF9CA3AF.toInt()); textSize = 12f
+            gravity = android.view.Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // Thin bar: watched part in the accent colour, the rest as a faint track.
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(2).toFloat(); setColor(0x33FFFFFF) }
+            clipToOutline = true
+            val done = (e.progress * 1000).toInt().coerceIn(1, 999)
+            addView(View(context).apply { setBackgroundColor(0xFF818CF8.toInt()) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, done.toFloat()))
+            addView(View(context), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, (1000 - done).toFloat()))
+        }
+        col.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(4)).apply { topMargin = dp(8) })
+        tile.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (editingContinue) tile.addView(TextView(this).apply {
+            text = "✕"; setTextColor(android.graphics.Color.WHITE); textSize = 14f; gravity = android.view.Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(0xFFEF4444.toInt()) }
+        }, FrameLayout.LayoutParams(dp(28), dp(28), android.view.Gravity.TOP or android.view.Gravity.END).apply { setMargins(0, dp(6), dp(6), 0) })
+        return tile
+    }
+
+    private fun removeContinue(url: String) {
+        prefs.continueWatching = ContinueWatching.remove(prefs.continueWatching, url)
+        TvHome.sync(this, foreground = true)
+        if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
+    }
+
+    /** Settings, Clear browsing data and turning the setting off all end here; the launcher rows go too. */
+    private fun clearContinueWatching() {
+        prefs.continueWatching = emptyList()
+        resumeOfferUrl = null
+        TvHome.sync(this, foreground = true)
+    }
+
+    /** A playback sample: which tab and page it came from, position and duration in seconds. */
+    private class WatchSample(val tab: Tab, val url: String, val title: String, val t: Double, val d: Double, val playing: Boolean)
+
+    /** Page whose "Resume from …" notice is up: its saved position must not be overwritten meanwhile. */
+    private var resumeOfferUrl: String? = null
+    /** Page already offered a resume in this visit, so the notice shows once. */
+    private var resumeOfferedFor: String? = null
+    private var resumeProbes = 0
+
+    /** Every 10 s while mkTV is on screen: one status() read, not a timeupdate listener in the page. */
+    private val watchTick = object : Runnable {
+        override fun run() {
+            sampleWatching()
+            root.postDelayed(this, 10_000)
+        }
+    }
+
+    /** After a page with a saved position loads, look for its video every 2 s for half a minute. */
+    private val resumeProbe = object : Runnable {
+        override fun run() {
+            if (resumeOfferedFor == webView.url || ++resumeProbes > 15) return
+            sampleWatching()
+            root.postDelayed(this, 2_000)
+        }
+    }
+
+    private fun startResumeProbe(url: String?) {
+        root.removeCallbacks(resumeProbe)
+        if (url == null || inPrivate || !prefs.rememberWatching || ContinueWatching.find(prefs.continueWatching, url) == null) return
+        resumeProbes = 0
+        root.postDelayed(resumeProbe, 1_500)
+    }
+
+    /**
+     * Reads the top-frame video's position (the same __sp.status() the phone remote's Now playing uses) and saves it.
+     * The tab and URL are taken before the async read: a tab switch or an in-page navigation (YouTube) can happen meanwhile.
+     */
+    private fun sampleWatching(then: (() -> Unit)? = null) {
+        if (!::activeTab.isInitialized || activeTab.isPrivate || !prefs.rememberWatching || !hasPage()) { then?.invoke(); return }
+        val tab = activeTab
+        val wv = webView
+        val url = wv.url ?: run { then?.invoke(); return }
+        wv.evaluateJavascript("window.__sp ? __sp.status() : null") { r ->
+            val o = parseJs(r)?.takeIf { it.optBoolean("has") }
+            if (o != null && wv.url == url) {
+                val s = WatchSample(tab, url, wv.title?.takeIf { it.isNotBlank() && !it.startsWith("http") } ?: prettyHost(url),
+                    o.optDouble("t", 0.0), o.optDouble("d", 0.0), o.optBoolean("playing"))
+                if (wv === webView && customView == null) maybeOfferResume(s)
+                commitWatch(s)
+            }
+            then?.invoke()
+        }
+    }
+
+    private fun commitWatch(s: WatchSample) {
+        if (s.tab.isPrivate || !prefs.rememberWatching) return
+        if (resumeOfferUrl != null && ContinueWatching.key(resumeOfferUrl!!) == ContinueWatching.key(s.url)) return
+        // Only while playing: a paused page under the native player (or a video not started yet) would overwrite a real position.
+        if (!s.playing) return
+        val list = prefs.continueWatching
+        val saved = ContinueWatching.find(list, s.url)
+        val next = ContinueWatching.record(list, s.url, s.title, prettyHost(s.url), s.t, s.d, System.currentTimeMillis())
+        if (next === list) return
+        prefs.continueWatching = next
+        // A new or finished video changes the launcher rows; position updates wait for onStop.
+        if ((saved == null) != (ContinueWatching.find(next, s.url) == null)) TvHome.sync(this, foreground = true)
+    }
+
+    /** "Resume from 12:34" once per visit, for the same video, when the page didn't resume by itself. */
+    private fun maybeOfferResume(s: WatchSample) {
+        if (resumeOfferedFor == s.url) return
+        val saved = ContinueWatching.find(prefs.continueWatching, s.url) ?: return
+        // Duration unknown (seekTo() wouldn't work) or a different length (a pre-roll ad): keep looking.
+        if (!ContinueWatching.sameVideo(saved, s.d)) return
+        resumeOfferedFor = s.url
+        if (!ContinueWatching.shouldOffer(saved, s.t, s.d)) return
+        val at = saved.position
+        showSnack(R.drawable.ic_history, "Resume from ${ContinueWatching.clock(at)}? Press ▼", "Resume", reachable = true,
+            actionIcon = R.drawable.ic_play, durationMs = 10_000) {
+            resumeOfferUrl = null
+            webView.evaluateJavascript("window.__sp && __sp.seekTo($at)", null)
+            flash("▶ ${ContinueWatching.clock(at)}")
+        }
+        resumeOfferUrl = s.url
+    }
+
+    private fun resumeOfferShowing() = resumeOfferUrl != null && snackbar.visibility == View.VISIBLE
 
     // ---- History page ----
 
@@ -2113,11 +2323,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             ) { i -> prefs.startWithShortcuts = i == 0; settingsDirty = true; renderSettings() })
             card.addView(fieldRow(
                 "Home page address",
-                if (prefs.startWithShortcuts) "Popular sites, your Favourites and Recently visited. Switch to use a fixed page instead." else "Opens on launch and with the home button",
+                if (prefs.startWithShortcuts) "Continue watching, Popular sites, your Favourites and Recently visited. Switch to use a fixed page instead." else "Opens on launch and with the home button",
                 prefs.homeUrl, "https://www.google.com",
             ) { prefs.homeUrl = it; settingsDirty = true })
             prefs.homeOrder.forEach { id ->
                 card.addView(toggleRow("Show ${sectionName(id)}", when (id) {
+                    "cw" -> "Videos you didn't finish, to pick up where you left off"
                     "pop" -> "Well-known video sites; Edit on the home screen to change them"
                     "fav" -> "Sites you saved"
                     else -> "The last sites you opened"
@@ -2177,6 +2388,17 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 tabs.filter { t -> !t.isPrivate }.mapNotNull { t -> t.webView }.forEach { w -> CookieManager.getInstance().setAcceptThirdPartyCookies(w, !it) }
                 settingsDirty = true
             })
+            card.addView(toggleRow("Remember where I stopped watching", "Keeps your place in videos over 3 minutes for Continue watching on Home. On Android TV they also appear in the Play Next row, and with your Favourites in a mkTV channel on the TV home screen. Never in private browsing. Off forgets the list and removes the TV home screen cards.",
+                prefs.rememberWatching) {
+                prefs.rememberWatching = it
+                if (!it) clearContinueWatching()
+                renderSettings() // the Clear row's count
+            })
+            val saved = prefs.continueWatching.size
+            card.addView(actionRow("Clear Continue watching", if (saved == 0) "Nothing saved" else if (saved == 1) "1 video" else "$saved videos",
+                "Clear", danger = true, icon = R.drawable.ic_delete) { btn ->
+                clearContinueWatching(); btn.text = "Cleared ✓"
+            })
         }
 
         section(c, "Blocklists") { card -> renderFilterLists(card) }
@@ -2205,8 +2427,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             card.addView(toggleRow("Desktop sites", "Ask sites for their desktop version (bigger layouts, fewer app banners)", prefs.desktopMode) {
                 prefs.desktopMode = it; applyUserAgent(); settingsDirty = true
             })
-            card.addView(actionRow("Clear browsing data", "Cookies, cache, site storage and history. You'll be signed out of sites.",
-                "Clear", danger = true) { btn ->
+            card.addView(actionRow("Clear browsing data", "Cookies, cache, site storage, history and Continue watching. You'll be signed out of sites.",
+                "Clear", danger = true, icon = R.drawable.ic_delete) { btn ->
                 if (!confirmClear) { confirmClear = true; btn.text = "Press again to confirm"; return@actionRow }
                 CookieManager.getInstance().removeAllCookies(null)
                 android.webkit.WebStorage.getInstance().deleteAllData()
@@ -2214,6 +2436,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 webView.clearHistory()
                 prefs.recent = emptyList()
                 prefs.history = emptyList()
+                clearContinueWatching()
                 confirmClear = false
                 btn.text = "Cleared ✓"
                 settingsDirty = true
@@ -2312,9 +2535,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
-    private fun actionRow(title: String, subtitle: String?, action: String, danger: Boolean = false, onClick: (TextView) -> Unit): View {
+    private fun actionRow(title: String, subtitle: String?, action: String, danger: Boolean = false, icon: Int = 0, onClick: (TextView) -> Unit): View {
         val btn = TextView(this).apply {
             text = action
+            if (icon != 0) { setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0); compoundDrawablePadding = dp(8) }
             gravity = android.view.Gravity.CENTER
             setTextColor(if (danger) 0xFFFCA5A5.toInt() else android.graphics.Color.WHITE); textSize = 14f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -3453,7 +3677,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             row.setOnClickListener { set(!get()); paint() }
             menuPanel.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        check("History", "Back/forward history, History and Recently visited", { clearHistory }) { clearHistory = it }
+        check("History", "Back/forward history, History, Recently visited and Continue watching", { clearHistory }) { clearHistory = it }
         check("Cookies & site data", "Signs you out of most sites", { clearCookies }) { clearCookies = it }
         check("Cached images & files", "Frees space; pages load slower once", { clearCache }) { clearCache = it }
         val buttons = LinearLayout(this).apply {
@@ -3533,6 +3757,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             tabs.forEach { it.webView?.clearHistory(); it.state = null } // a sleeping tab then reloads without its back list
             prefs.recent = emptyList()
             prefs.history = emptyList()
+            clearContinueWatching()
             what += "history"
         }
         if (clearCookies) {
@@ -4021,7 +4246,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 if (!watchVertical) {
                     // Normal video: ▼ = full screen, ▲ = playback controls (Back leaves full screen / watch mode).
                     if (down && e.repeatCount == 0) {
-                        if (e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) { if (!theater) toggleTheater() else showDock() }
+                        // A "Resume from …" notice is up: ▼ goes to its Resume button first.
+                        if (e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && resumeOfferShowing() && customView == null) findViewById<View>(R.id.snackAction).requestFocus()
+                        else if (e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) { if (!theater) toggleTheater() else showDock() }
                         else openControls()
                     }
                     return true
@@ -4360,6 +4587,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             remotePanel.visibility == View.VISIBLE -> closePhoneRemote()
             menuOpen() && inSubMenu -> { inSubMenu = false; buildMenu(); firstMenuItem()?.requestFocus() }
             menuOpen() -> closeMenu()
+            isInside(snackbar, currentFocus) -> hideSnackbar() // before watch mode: Back on a notice closes the notice
             watching && theater -> toggleTheater()
             watching -> exitWatch()
             settingsPanel.visibility == View.VISIBLE -> closeSettings()
@@ -4371,6 +4599,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
             shortcutsPanel.visibility == View.VISIBLE && editingShortcuts -> { editingShortcuts = false; renderShortcuts(); findViewById<View>(R.id.shortcutsEdit).requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && editingPopular -> { editingPopular = false; renderShortcuts(); findViewById<View>(R.id.popularEdit).requestFocus() }
+            shortcutsPanel.visibility == View.VISIBLE && editingContinue -> { editingContinue = false; renderShortcuts(); (findViewById<View>(R.id.cwEdit).takeIf { it.isShown } ?: firstHomeTile())?.requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && openFolder >= 0 -> closeFavFolder()
             shortcutsPanel.visibility == View.VISIBLE && hasPage() -> closeShortcuts()
             isInside(toolbar, currentFocus) -> leaveToPage()
@@ -4415,7 +4644,38 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // One mkTV (singleTask): a link from another app opens in a new tab, or in this one if it's still blank.
-        intent.dataString?.let { closeShortcuts(); val url = normalizeInput(it); if (hasPage()) openInNewTab(url, isPrivate = false) else load(url) }
+        val data = intent.dataString ?: return
+        if (intent.getBooleanExtra(TvHome.EXTRA_FROM_TV_HOME, false)) { openFromTvHome(normalizeInput(data)); return }
+        closeShortcuts(); val url = normalizeInput(data); if (hasPage()) openInNewTab(url, isPrivate = false) else load(url)
+    }
+
+    /**
+     * A card on the TV home screen (Play Next or the mkTV channel): close whatever panel is open, then show the
+     * normal tab already on that page, or open it (in this tab if it's blank). Private tabs are never reused.
+     */
+    private fun openFromTvHome(url: String) {
+        exitFullscreen(notifyPage = true)
+        hideSuggestions()
+        menuScroll.visibility = View.GONE; inSubMenu = false
+        shieldPanel.visibility = View.GONE
+        settingsPanel.visibility = View.GONE
+        historyPanel.visibility = View.GONE
+        downloadsPanel.visibility = View.GONE
+        if (remotePanel.visibility == View.VISIBLE) closePhoneRemote()
+        if (wifiPanel.visibility == View.VISIBLE) closeShareWifi()
+        shortcutsPanel.visibility = View.GONE
+        editingShortcuts = false; editingPopular = false; editingContinue = false
+        onOverlayChanged(null)
+        val key = ContinueWatching.key(url)
+        val open = tabs.firstOrNull { !it.isPrivate && ContinueWatching.key(it.currentUrl) == key }
+        when {
+            open != null -> {
+                if (open !== activeTab) showTab(open)
+                resumeOfferedFor = null; startResumeProbe(open.currentUrl)
+            }
+            !inPrivate && !tabHasPage(activeTab) -> load(url)
+            else -> openInNewTab(url, isPrivate = false)
+        }
     }
 
     override fun onPause() {
@@ -4423,6 +4683,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val add = pendingTotal.getAndSet(0)
         if (add > 0) prefs.totalBlocked += add
         cursor.releaseAll()
+        root.removeCallbacks(watchTick); root.removeCallbacks(resumeProbe)
+        // Last position before leaving; the launcher's Play Next row then gets it too.
+        sampleWatching { TvHome.sync(this, foreground = false) }
         webView.onPause()
     }
 
@@ -4432,6 +4695,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         webView.onResume()
         root.keepScreenOn = true // the sleep timer may have let it go
         hideSystemBars()
+        root.removeCallbacks(watchTick); root.postDelayed(watchTick, 10_000)
         blocker.load() // builds the lists once, then refreshes any over a day old; cheap otherwise
     }
 
@@ -4455,6 +4719,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         super.onStop()
         remoteServer.stop()
         downloads.onStop()
+        TvHome.sync(this, foreground = false) // cheap when nothing changed
     }
 
     override fun onDestroy() {
