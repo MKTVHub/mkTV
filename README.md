@@ -178,6 +178,7 @@ You installed a self-built copy (debug key). Install the release APK once over i
 - [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md): phone remote protocol and security
 - [docs/PRIVACY.md](docs/PRIVACY.md): what is stored and sent, private mode limits
 - [docs/ROADMAP.md](docs/ROADMAP.md): release checklist, next features, other TV platforms
+- [docs/PLAY_STORE.md](docs/PLAY_STORE.md): Google Play (Android TV) requirements, permissions and policy notes
 - [AGENTS.md](AGENTS.md): guide for contributors and AI coding agents
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 

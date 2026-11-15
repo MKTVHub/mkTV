@@ -86,4 +86,33 @@ class PlayerRemoteTest {
         c.activityStarted(browser); c.activityStopped(browser)
         assertEquals(listOf("start", "stop"), events)
     }
+
+    /** Android restores only the player after killing the process: it is the first activity, so it starts the server. */
+    @Test fun aPlayerRestoredAloneStartsTheServer() {
+        val events = mutableListOf<String>()
+        val c = ForegroundCounter({ events += "start" }, { events += "stop" })
+        c.activityStarted(player)
+        assertEquals(listOf("start"), events)
+        // Back from the player creates the browser, which starts before the player stops: no restart.
+        c.activityStarted(browser); c.activityStopped(player)
+        assertEquals(listOf("start"), events)
+        c.activityStopped(browser)
+        assertEquals(listOf("start", "stop"), events)
+    }
+
+    @Test fun jumpPointerIsRefusedWhileThePlayerIsInFront() {
+        val r = PlayerRemote.navigationRefused("pointer")
+        assertFalse(r.getBoolean("ok"))
+        assertEquals("player", r.getString("reason"))
+        assertEquals("pointer", r.getString("mode"))
+    }
+
+    @Test fun favouriteInThePlayerIsTheWebPageItCameFrom() {
+        assertEquals("https://example.com/watch?v=1", PlayerRemote.pageUrl("https://example.com/watch?v=1"))
+        assertEquals("HTTP://example.com/", PlayerRemote.pageUrl("HTTP://example.com/"))
+        assertEquals(null, PlayerRemote.pageUrl(null))
+        assertEquals(null, PlayerRemote.pageUrl("content://com.mktvhub.mktv.files/video.mp4"))
+        assertEquals(null, PlayerRemote.pageUrl("about:blank"))
+        assertEquals(null, PlayerRemote.pageUrl("httpfoo"))
+    }
 }

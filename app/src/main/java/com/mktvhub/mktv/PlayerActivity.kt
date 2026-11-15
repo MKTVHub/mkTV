@@ -48,6 +48,9 @@ class PlayerActivity : Activity() {
     /** Continue watching: the page this stream came from, or null when it mustn't be remembered (private, setting off, a file). */
     private var pageUrl: String? = null
     private var pageTitle = ""
+    /** The page the video was opened from, for the phone's ★ (also in private browsing, unlike [pageUrl]). */
+    var remotePage: String? = null
+        private set
     private var failed = false
     private var overlayOn = false
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -66,6 +69,7 @@ class PlayerActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        RemoteHub.attach(this) // before onStart: a player restored without the browser starts the phone remote too
         WindowCompat.setDecorFitsSystemWindows(window, false)
         WindowInsetsControllerCompat(window, window.decorView).hide(WindowInsetsCompat.Type.systemBars())
 
@@ -73,6 +77,7 @@ class PlayerActivity : Activity() {
         val local = !url.startsWith("http", ignoreCase = true)
         pageUrl = intent.getStringExtra(EXTRA_PAGE_URL)?.takeIf { !local && intent.getBooleanExtra(EXTRA_REMEMBER, false) && it.startsWith("http") }
         pageTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty()
+        remotePage = if (local) null else PlayerRemote.pageUrl(intent.getStringExtra(EXTRA_PAGE_URL))
         val headers = buildMap {
             intent.getStringExtra(EXTRA_REFERER)?.let { put("Referer", it) }
             intent.getStringExtra(EXTRA_ORIGIN)?.let { put("Origin", it) }
@@ -415,7 +420,7 @@ class PlayerActivity : Activity() {
         @Suppress("DEPRECATION") super.onBackPressed()
     }
 
-    // ---- Phone remote (the browser's server hands these over while this player is in front) ----
+    // ---- Phone remote (the browser hands these over while this player is in front; alone, [RemoteHub] calls them) ----
 
     /** Seek bar, speed and subtitles from the phone's Now playing card ([PlayerRemote.media]). */
     fun remoteMedia(action: String, value: Double) {
@@ -440,6 +445,27 @@ class PlayerActivity : Activity() {
     }
 
     fun remoteTitle(): String = findViewById<TextView>(R.id.playerTitle).text.toString()
+
+    private var lastToast: android.widget.Toast? = null
+    fun toast(msg: String) {
+        lastToast?.cancel()
+        lastToast = android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_SHORT).also { it.show() }
+    }
+
+    /** The phone's ★ with no browser behind ([RemoteHub]): saves or removes the video's page, as the browser's ★ does. */
+    fun remoteFavourite(action: String?): org.json.JSONObject {
+        val page = remotePage ?: return org.json.JSONObject().put("ok", false)
+        val prefs = Prefs(this)
+        val saved = Bookmarks.containsUrl(prefs.bookmarks, page)
+        if (RemoteInput.favouriteTarget(action, saved) != saved) {
+            if (saved) { prefs.bookmarks = Bookmarks.removeUrl(prefs.bookmarks, page); toast("Removed from Favourites") }
+            else {
+                val title = pageTitle.ifBlank { android.net.Uri.parse(page).host?.removePrefix("www.") ?: page }
+                prefs.bookmarks = Bookmarks.add(prefs.bookmarks, Bookmarks.Link(title, page)); toast("Added to Favourites: $title")
+            }
+        }
+        return org.json.JSONObject().put("ok", true).put("fav", Bookmarks.containsUrl(prefs.bookmarks, page))
+    }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)

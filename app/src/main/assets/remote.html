@@ -276,7 +276,7 @@
     $('navT').textContent = mode === 'jump' ? 'Jump' : 'Pointer';
   }
   $('nav').onclick = function () {
-    if (navBusy) return;
+    if (navBusy || $('nav').disabled) return;
     buzz(); navBusy = true;
     api('/api/navigation', { mode: 'toggle' })
       .then(function (r) { return r && r.ok ? r.json() : null; })
@@ -551,6 +551,8 @@
       if (s.sleep) renderSleep(s.sleep);
       if (!favBusy) renderFav(s.canFav, s.fav);
       if (!navBusy) renderNav(s.nav);
+      // The native video player has no links or pointer: Jump / Pointer waits until it closes.
+      $('nav').disabled = !!s.player;
     }).catch(function () { setOnline(false); }).then(function () {
       if (gen === pollGen) pollTimer = setTimeout(poll, media ? 1000 : 2500);
     });

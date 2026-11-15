@@ -5,9 +5,10 @@ package com.mktvhub.mktv
  * Back walks a page's history; at its start it opens mkTV Home, and Back on that Home asks
  * "Press Back again to exit" rather than returning to the page (no page ↔ Home loop).
  * Home opened deliberately over a page (Home button, ⋮, the phone) still closes back to the page.
+ * The toolbar's Back returns to what's on screen below it: the page, or Home's first tile while Home covers it.
  */
 object BackAction {
-    enum class Action { CLOSE_HOME, LEAVE_TOOLBAR, HIDE_SNACKBAR, GO_BACK, CLOSE_TAB, OPEN_HOME, PROMPT_EXIT, EXIT }
+    enum class Action { CLOSE_HOME, FOCUS_HOME, LEAVE_TOOLBAR, HIDE_SNACKBAR, GO_BACK, CLOSE_TAB, OPEN_HOME, PROMPT_EXIT, EXIT }
 
     /** A second Back within this long of "Press Back again to exit" leaves mkTV. */
     const val EXIT_WINDOW_MS = 2_000L
@@ -30,6 +31,8 @@ object BackAction {
         val exit = if (sinceExitPromptMs in 0 until EXIT_WINDOW_MS) Action.EXIT else Action.PROMPT_EXIT
         return when {
             homeShown && hasPage && !homeFromBack -> Action.CLOSE_HOME
+            // Home reached by Back (or with no page) hides the page: focus goes to Home, not the hidden page.
+            toolbarFocused && homeShown -> Action.FOCUS_HOME
             toolbarFocused -> Action.LEAVE_TOOLBAR
             snackbarFocused -> Action.HIDE_SNACKBAR
             // Home with nothing behind it, or reached by Back: the next step out is leaving mkTV.

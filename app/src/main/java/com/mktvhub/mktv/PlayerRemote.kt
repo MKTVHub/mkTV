@@ -4,8 +4,9 @@ import org.json.JSONObject
 
 /**
  * Phone remote while the native player ([PlayerActivity]) is in front (pure, tested in PlayerRemoteTest).
- * The one [RemoteServer] stays the browser's (same port and pairing code); the browser hands keys and
- * media actions to the player and reports the player's video as Now playing.
+ * The one [RemoteServer] belongs to the process ([RemoteHub]: same port and pairing code); the browser hands
+ * keys and media actions to the player and reports the player's video as Now playing. A player restored
+ * without the browser answers the phone itself.
  */
 object PlayerRemote {
     enum class Target { PLAYER, BROWSER, NONE }
@@ -30,13 +31,20 @@ object PlayerRemote {
             .put("d", if (live || durationMs <= 0) 0.0 else durationMs / 1000.0)
             .put("cc", captions).put("ccOn", captions && captionsOn)
             .put("speed", speed).put("fs", true)
+
+    /** Jump / Pointer while the player is in front: refused (no links or pointer there), the page's mode unchanged. */
+    fun navigationRefused(mode: String): JSONObject = JSONObject().put("ok", false).put("reason", "player").put("mode", mode)
+
+    /** ★ in the player saves the page the video was opened from: only a web page, never a stream or a file. */
+    fun pageUrl(extra: String?): String? = extra?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
 }
 
 /**
  * Tracks mkTV's started activities (by identity), so the phone remote keeps listening while the native
  * player covers the browser and stops only when mkTV really leaves the screen. Opening the player starts
- * it before the browser stops (Android's order), so the set is never empty on the way. A stop for an
- * activity started before tracking began (a player restored before the browser) is ignored. Main thread only.
+ * it before the browser stops (Android's order), so the set is never empty on the way. Every mkTV activity
+ * attaches [RemoteHub] in onCreate, so whichever starts first (the browser, or a player restored alone)
+ * starts the server. A stop for an activity started before tracking began is ignored. Main thread only.
  */
 class ForegroundCounter(private val onForeground: () -> Unit, private val onBackground: () -> Unit) {
     private val started = HashSet<Int>()

@@ -21,8 +21,8 @@ android {
         applicationId = "com.mktvhub.mktv"
         minSdk = 24
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.3.4"
+        versionCode = 10
+        versionName = "1.3.5"
         buildConfigField("String", "DEFAULT_HOME_URL", "\"https://www.google.com\"")
     }
 

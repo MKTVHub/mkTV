@@ -30,7 +30,7 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         fun onMedia(action: String, value: Double)
         /** Adds the TV's current page to Favourites or removes it ([RemoteInput.favouriteTarget]); {"ok", "fav"}. */
         fun onFavourite(action: String?): JSONObject
-        /** Jump / pointer navigation, as ⋮ → Navigation ([RemoteInput.navigationTarget]); {"ok", "mode"}. */
+        /** Jump / pointer navigation, as ⋮ → Navigation ([RemoteInput.navigationTarget]); {"ok", "mode"}, plus "reason":"player" when refused. */
         fun onNavigation(mode: String?): JSONObject
         fun state(): JSONObject
         fun home(): JSONObject
@@ -212,7 +212,8 @@ class RemoteServer(private val context: Context, private val listener: Listener,
                 respond(200, "application/json", listener.onFavourite(json.optString("action")).toString())
             method == "POST" && path == "/api/navigation" -> {
                 val out = listener.onNavigation(json.optString("mode"))
-                respond(if (out.optBoolean("ok")) 200 else 400, "application/json", out.toString())
+                // A refusal with a reason (the player is in front) is a normal answer; a bad mode is a bad request.
+                respond(if (out.optBoolean("ok") || out.has("reason")) 200 else 400, "application/json", out.toString())
             }
             else -> respond(404, "application/json", "{\"ok\":false}")
         }

@@ -43,6 +43,11 @@ object SiteIcons {
     /** The icon cache key for [host]; null for hosts without a dot (localhost, a bare name), which get the letter tile. */
     fun key(host: String?): String? = host?.lowercase()?.removePrefix("www.")?.takeIf { it.contains('.') }
 
+    /** Where [host]'s icon is saved under the app's [filesDir]; null when it has no [key]. */
+    fun file(filesDir: java.io.File, host: String?): java.io.File? = key(host)?.let { java.io.File(java.io.File(filesDir, DIR), "$it.png") }
+
+    const val DIR = "icons2"
+
     private val tried = HashSet<String>()
 
     /**

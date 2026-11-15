@@ -97,7 +97,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_browser)
         prefs = Prefs(this)
-        application.registerActivityLifecycleCallbacks(activityCounter) // before onStart, so this activity counts too
+        RemoteHub.attach(this) // before onStart, so this activity counts too
         blocker = AdBlocker(this, prefs) // lists load in onResume
         parentalSites = prefs.blockedSites
 
@@ -142,6 +142,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         webView.isFocusableInTouchMode = true
         urlField.clearFocus()
         if (!overlayOpen()) webView.requestFocus()
+        handleRemoteIntent(intent)
         // After the first page has had a head start; at most once a day, silent on failure.
         root.postDelayed({ checkForUpdate() }, 4000)
     }
@@ -1786,7 +1787,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     /** One icon per host (minus "www."), so youtube.com and music.youtube.com keep their own icons. */
     private fun faviconFile(host: String?): java.io.File? {
         val key = SiteIcons.key(host) ?: return null
-        val dir = java.io.File(filesDir, "icons2")
+        val dir = java.io.File(filesDir, SiteIcons.DIR)
         if (!dir.exists()) { java.io.File(filesDir, "icons").deleteRecursively(); dir.mkdirs() } // old per-site cache
         return java.io.File(dir, "$key.png")
     }
@@ -2156,12 +2157,20 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private var checkingUpdate = false
     private var updateDownloading = false
 
+    /** Installed from an app store (Google Play): the store updates mkTV, so the GitHub check, card and rows are off. */
+    private val selfUpdates by lazy {
+        Updates.selfUpdates(runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= 30) packageManager.getInstallSourceInfo(packageName).installingPackageName
+            else @Suppress("DEPRECATION") packageManager.getInstallerPackageName(packageName)
+        }.getOrNull())
+    }
+
     private fun availableUpdate(): Updates.Release? =
-        prefs.latestRelease?.takeIf { Updates.isNewer(it.version, currentVersion) }
+        prefs.latestRelease?.takeIf { selfUpdates && Updates.isNewer(it.version, currentVersion) }
 
     /** At most once a day unless [force]d. Offline, rate-limited or no usable release all just mean "no card". */
     private fun checkForUpdate(force: Boolean = false, done: (() -> Unit)? = null) {
-        if (checkingUpdate) return
+        if (checkingUpdate || !selfUpdates) return
         if (!force && (!prefs.updateCheck || !Updates.due(prefs.lastUpdateCheck, System.currentTimeMillis()))) return
         checkingUpdate = true
         kotlin.concurrent.thread(name = "update-check") {
@@ -2575,7 +2584,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 else "Files are saved in mkTV's own folder on the TV (deleted if you uninstall mkTV)", "Open") { closeSettings(); showDownloads() })
         }
 
-        section(c, "Updates") { card ->
+        if (selfUpdates) section(c, "Updates") { card ->
             val update = availableUpdate()
             val status = when {
                 checkingUpdate -> "Checking…"
@@ -3226,14 +3235,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // ---- Phone remote (LAN web page, paired by QR code) ----
 
     private val remotePanel: View by lazy { findViewById(R.id.remotePanel) }
-    private val remoteServer by lazy { RemoteServer(this, this, { prefs.remoteToken }, { prefs.remoteToken = it }) }
+    /** The process's one server ([RemoteHub]): this browser is its listener while it exists. */
+    private val remoteServer get() = RemoteHub.server
 
     private fun showPhoneRemote() {
         closeMenu()
         // Opening the panel turns the remote on, so it asks for the PIN when the remote is off.
         if (!prefs.remoteEnabled && needsPin(Parental.GUARD_REMOTE)) { askPin("Enter the PIN to turn on the phone remote") { showPhoneRemote() }; return }
         prefs.remoteEnabled = true
-        startRemote()
+        RemoteHub.start()
         val url = remoteServer.url()
         val qr = findViewById<android.widget.ImageView>(R.id.remoteQr)
         remoteHelpShown = false
@@ -3566,64 +3576,16 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         return bmp
     }
 
-    private val heldKeys = HashMap<Int, Runnable>()
-
-    private fun releaseHeldKeys() {
-        heldKeys.values.forEach { root.removeCallbacks(it) }
-        heldKeys.clear()
-    }
-
-    /** A phone key to the screen in front: the native player when it covers the browser, else the browser ([dispatchRemoteKey]). */
-    private fun sendRemoteKey(e: KeyEvent): Boolean = (PlayerActivity.front() ?: this).dispatchRemoteKey(e)
-
     override fun onKey(key: String, action: String) = runOnUiThread {
         if (key == "home") { if (action != "up") { PlayerActivity.closeFront(); pinPad.cancel(); closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
-        // Apps can't inject volume keys; adjust the media stream directly (FLAG_SHOW_UI shows the TV's own volume bar).
-        if (key == "volup" || key == "voldown" || key == "mute") {
-            if (action != "up") (getSystemService(AUDIO_SERVICE) as android.media.AudioManager).adjustStreamVolume(
-                android.media.AudioManager.STREAM_MUSIC,
-                when (key) { "volup" -> android.media.AudioManager.ADJUST_RAISE; "voldown" -> android.media.AudioManager.ADJUST_LOWER; else -> android.media.AudioManager.ADJUST_TOGGLE_MUTE },
-                android.media.AudioManager.FLAG_SHOW_UI)
-            return@runOnUiThread
-        }
-        val code = when (key) {
-            "up" -> KeyEvent.KEYCODE_DPAD_UP; "down" -> KeyEvent.KEYCODE_DPAD_DOWN
-            "left" -> KeyEvent.KEYCODE_DPAD_LEFT; "right" -> KeyEvent.KEYCODE_DPAD_RIGHT
-            "ok" -> KeyEvent.KEYCODE_DPAD_CENTER; "back" -> KeyEvent.KEYCODE_BACK; "menu" -> KeyEvent.KEYCODE_MENU
-            "playpause" -> KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE; "ff" -> KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
-            "rew" -> KeyEvent.KEYCODE_MEDIA_REWIND; "next" -> KeyEvent.KEYCODE_MEDIA_NEXT; "prev" -> KeyEvent.KEYCODE_MEDIA_PREVIOUS
-            "pageup" -> KeyEvent.KEYCODE_PAGE_UP; "pagedown" -> KeyEvent.KEYCODE_PAGE_DOWN
-            else -> return@runOnUiThread
-        }
-        val now = SystemClock.uptimeMillis()
-        when (action) {
-            "down" -> {
-                heldKeys.remove(code)?.let { root.removeCallbacks(it) }
-                val downTime = now
-                sendRemoteKey(KeyEvent(downTime, now, KeyEvent.ACTION_DOWN, code, 0))
-                // Holding a phone button behaves like holding the remote: key repeats after 450 ms.
-                val repeater = object : Runnable {
-                    var count = 1
-                    override fun run() {
-                        val t = SystemClock.uptimeMillis()
-                        // The phone's "up" can get lost (screen locked, Wi-Fi blip): let go by itself rather than repeat forever.
-                        if (t - downTime > HELD_KEY_MAX_MS) { heldKeys.remove(code); sendRemoteKey(KeyEvent(downTime, t, KeyEvent.ACTION_UP, code, 0)); return }
-                        sendRemoteKey(KeyEvent(downTime, t, KeyEvent.ACTION_DOWN, code, count++, 0, 0, 0, KeyEvent.FLAG_LONG_PRESS.takeIf { count == 2 } ?: 0))
-                        root.postDelayed(this, 90)
-                    }
-                }
-                heldKeys[code] = repeater
-                root.postDelayed(repeater, 450)
-            }
-            "up" -> {
-                heldKeys.remove(code)?.let { root.removeCallbacks(it) }
-                sendRemoteKey(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-            }
-            else -> {
-                sendRemoteKey(KeyEvent(now, now, KeyEvent.ACTION_DOWN, code, 0))
-                sendRemoteKey(KeyEvent(now, now, KeyEvent.ACTION_UP, code, 0))
-            }
-        }
+        RemoteHub.key(key, action) // into the player when it covers the browser, else here
+    }
+
+    /** From the player-only remote ([RemoteHub]): the phone's Home or an address, once this browser is back. */
+    private fun handleRemoteIntent(i: Intent?) {
+        if (i == null) return
+        i.getStringExtra(RemoteHub.EXTRA_REMOTE_OPEN)?.let { i.removeExtra(RemoteHub.EXTRA_REMOTE_OPEN); onOpen(it) }
+        if (i.getBooleanExtra(RemoteHub.EXTRA_REMOTE_HOME, false)) { i.removeExtra(RemoteHub.EXTRA_REMOTE_HOME); onKey("home", "press") }
     }
 
     /**
@@ -3707,7 +3669,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 .put("sleep", org.json.JSONObject().put("mode", sleepMode).put("left", (sleepLeftMs() + 999) / 1000)))
             val player = PlayerActivity.front()
             // The native player in front: its video is Now playing (the page's own one is paused behind it).
-            if (player != null) { base.get().put("title", player.remoteTitle()).put("media", player.remoteStatus()); latch.countDown() }
+            // Jump / Pointer has nothing to act on there: the phone greys it out ("player").
+            if (player != null) { base.get().put("title", player.remoteTitle()).put("player", true).put("media", player.remoteStatus()); latch.countDown() }
             else if (!hasPage()) latch.countDown()
             else webView.evaluateJavascript("window.__sp ? __sp.status() : null") { r -> media.set(r); latch.countDown() }
         }
@@ -3740,6 +3703,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val latch = java.util.concurrent.CountDownLatch(1)
         val out = java.util.concurrent.atomic.AtomicReference<org.json.JSONObject>()
         runOnUiThread {
+            // The native player covers the page: switching the page's navigation there would only surprise later.
+            if (PlayerActivity.front() != null) { out.set(PlayerRemote.navigationRefused(prefs.navMode)); latch.countDown(); return@runOnUiThread }
             val next = RemoteInput.navigationTarget(mode, prefs.navMode)
             if (next != null && next != prefs.navMode) {
                 prefs.navMode = next
@@ -3761,21 +3726,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val priv = java.util.concurrent.atomic.AtomicBoolean(true)
         runOnUiThread { priv.set(inPrivate); latch.countDown() }
         latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
-        val hidden = prefs.hiddenSections
-        val favs = if ("fav" in hidden) emptyList() else prefs.shortcuts
-        val recent = if (priv.get() || "rec" in hidden) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
-        fun tiles(list: List<Pair<String, String>>) = RemoteInput.tiles(list.map { (title, url) ->
-            val host = Uri.parse(url).host
-            RemoteInput.tile(title, url, host, faviconFile(host)?.exists() == true)
-        })
-        return org.json.JSONObject()
-            .put("popular", tiles(if ("pop" in hidden) emptyList() else prefs.popular))
-            .put("favourites", tiles(favs))
-            .put("recent", tiles(recent))
+        return RemoteHub.homeLists(this, priv.get())
     }
 
-    override fun icon(host: String): ByteArray? =
-        faviconFile(host)?.takeIf { it.isFile && it.length() in 1..512_000 }?.readBytes()
+    override fun icon(host: String): ByteArray? = RemoteHub.savedIcon(this, host)
 
     override fun onPhoneConnected(address: String) = runOnUiThread {
         val pairing = remotePanel.visibility == View.VISIBLE
@@ -3800,7 +3754,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun setRemoteEnabled(on: Boolean, onCancel: () -> Unit = {}) {
         if (on && needsPin(Parental.GUARD_REMOTE)) { askPin("Enter the PIN to turn on the phone remote", onCancel) { setRemoteEnabled(true) }; return }
         prefs.remoteEnabled = on
-        if (on) startRemote() else remoteServer.stop()
+        if (on) RemoteHub.start() else RemoteHub.stop()
     }
 
     // ---- ⋮ menu ----
@@ -4041,7 +3995,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             menuPanel.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         val update = availableUpdate()
-        row(R.drawable.ic_update,
+        if (selfUpdates) row(R.drawable.ic_update,
             if (checkingUpdate) "Checking…" else if (update != null) "Update to ${update.version}" else "Check for updates",
             when {
                 update != null -> "Downloads from GitHub, then Android asks you to install it"
@@ -4938,6 +4892,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 sinceExitPromptMs = SystemClock.uptimeMillis() - lastBackPress,
             )) {
                 BackAction.Action.CLOSE_HOME -> closeShortcuts()
+                BackAction.Action.FOCUS_HOME -> {
+                    (currentFocus as? EditText)?.let { hideKeyboard(it); it.clearFocus() }
+                    (firstHomeTile() ?: findViewById<View>(R.id.homeRemote)).requestFocus()
+                }
                 BackAction.Action.LEAVE_TOOLBAR -> leaveToPage()
                 BackAction.Action.HIDE_SNACKBAR -> hideSnackbar()
                 BackAction.Action.GO_BACK -> webView.goBack()
@@ -4976,11 +4934,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private var lastToast: Toast? = null
     private fun note(msg: String) = runOnUiThread {
         lastToast?.cancel()
-        lastToast = Toast.makeText(this, msg, Toast.LENGTH_SHORT).also { it.show() }
+        // The native player in front (e.g. ★ from the phone saves the video's page): the toast shows over it.
+        lastToast = Toast.makeText(PlayerActivity.front() ?: this, msg, Toast.LENGTH_SHORT).also { it.show() }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        handleRemoteIntent(intent)
         // One mkTV (singleTask): a link from another app opens in a new tab, or in this one if it's still blank.
         val data = intent.dataString ?: return
         if (intent.getBooleanExtra(TvHome.EXTRA_FROM_TV_HOME, false)) { openFromTvHome(normalizeInput(data)); return }
@@ -5037,35 +4997,6 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         blocker.load() // builds the lists once, then refreshes any over a day old; cheap otherwise
     }
 
-    /**
-     * The phone remote listens whenever mkTV is on screen (once the user has opened it), with the same
-     * port and pairing code, so a phone that already has the remote page open just keeps working.
-     * Coming back from the background the old socket can still be closing: retry for a few seconds.
-     */
-    private fun startRemote(attempt: Int = 0) {
-        remoteServer.start()
-        if (!remoteServer.running && attempt < 6) root.postDelayed({ if (!isFinishing && foreground.visible) startRemote(attempt + 1) }, 700)
-    }
-
-    /**
-     * "On screen" is any mkTV activity started, not just this one: the native player covers the browser
-     * and the phone keeps working there. The server stops only when the last one stops.
-     */
-    private val foreground = ForegroundCounter(
-        onForeground = { if (prefs.remoteEnabled) startRemote() },
-        onBackground = { remoteServer.stop(); releaseHeldKeys() }, // the server is gone, so no "up" can arrive
-    )
-
-    private val activityCounter = object : android.app.Application.ActivityLifecycleCallbacks {
-        override fun onActivityStarted(a: Activity) = foreground.activityStarted(System.identityHashCode(a))
-        override fun onActivityStopped(a: Activity) = foreground.activityStopped(System.identityHashCode(a))
-        override fun onActivityCreated(a: Activity, b: Bundle?) = Unit
-        override fun onActivityResumed(a: Activity) = Unit
-        override fun onActivityPaused(a: Activity) = Unit
-        override fun onActivitySaveInstanceState(a: Activity, b: Bundle) = Unit
-        override fun onActivityDestroyed(a: Activity) = Unit
-    }
-
     override fun onStart() {
         super.onStart()
         downloads.onStart()
@@ -5076,8 +5007,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         // Parental controls lock again whenever mkTV leaves the screen.
         unlockedAt = 0
         pinPad.cancel()
-        // The phone remote keeps running while the native player is in front ([foreground]); its keys go there now.
-        releaseHeldKeys()
+        // The phone remote keeps running while the native player is in front ([RemoteHub]); its keys go there now.
         downloads.onStop()
         TvHome.sync(this, foreground = false) // cheap when nothing changed
     }
@@ -5085,8 +5015,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun onDestroy() {
         sleepHandler.removeCallbacksAndMessages(null)
         PlayerActivity.sleepAtEnd = false
-        application.unregisterActivityLifecycleCallbacks(activityCounter)
-        remoteServer.stop()
+        // The server outlives this browser while the native player is still on screen ([RemoteHub]).
+        RemoteHub.detach(this)
         tabs.forEach { destroyTab(it) }
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }
         super.onDestroy()
@@ -5112,7 +5042,6 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         /** OK presses this soon after mkTV comes to the front are the launcher's, not the user's choice. */
         private const val LAUNCH_GUARD_MS = 900L
         /** A phone button held this long lets go by itself (its "up" may never arrive). */
-        private const val HELD_KEY_MAX_MS = 10_000L
         private const val PRIVATE_PROFILE = "private"
         /** Run on a tab as it goes to the background, so its video or music doesn't keep playing unseen. */
         private const val PAUSE_MEDIA_JS =

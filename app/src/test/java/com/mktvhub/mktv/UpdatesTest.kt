@@ -59,4 +59,12 @@ class UpdatesTest {
         assertNull(Updates.parseRelease("""{"message":"API rate limit exceeded"}"""))
         assertNull(Updates.parseRelease("not json"))
     }
+
+    @Test fun storeInstallsLeaveUpdatesToTheStore() {
+        assertEquals(false, Updates.selfUpdates("com.android.vending"))
+        assertEquals(false, Updates.selfUpdates("com.amazon.venezia"))
+        assertEquals(true, Updates.selfUpdates(null))
+        assertEquals(true, Updates.selfUpdates("com.android.packageinstaller"))
+        assertEquals(true, Updates.selfUpdates("com.google.android.packageinstaller"))
+    }
 }

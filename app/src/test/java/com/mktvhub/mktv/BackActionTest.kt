@@ -56,9 +56,18 @@ class BackActionTest {
     @Test fun toolbarAndSnackbarKeepTheirOwnBack() {
         assertEquals(Action.LEAVE_TOOLBAR, decide(toolbar = true, canGoBack = true))
         assertEquals(Action.HIDE_SNACKBAR, decide(snackbar = true, canGoBack = true))
-        assertEquals(Action.LEAVE_TOOLBAR, decide(homeShown = true, homeFromBack = true, toolbar = true))
         // Deliberate Home over a page closes first, as before.
         assertEquals(Action.CLOSE_HOME, decide(homeShown = true, toolbar = true))
+    }
+
+    /** Home hides the page, so the toolbar's Back focuses Home's first tile rather than the page behind it. */
+    @Test fun toolbarBackOnHomeThatCoversThePageGoesToHome() {
+        assertEquals(Action.FOCUS_HOME, decide(homeShown = true, homeFromBack = true, toolbar = true))
+        assertEquals(Action.FOCUS_HOME, decide(homeShown = true, homeFromBack = true, toolbar = true, canGoBack = true, sincePrompt = 500))
+        // Home with no page behind it: the same.
+        assertEquals(Action.FOCUS_HOME, decide(homeShown = true, hasPage = false, toolbar = true))
+        // Never an exit prompt from the toolbar; the next Back (on Home) asks.
+        assertEquals(Action.PROMPT_EXIT, decide(homeShown = true, homeFromBack = true))
     }
 
     /** Page at the start of its history → Home → prompt → exit, with no bounce back to the page. */

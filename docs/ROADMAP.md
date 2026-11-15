@@ -12,15 +12,15 @@ Shipped: jump and pointer navigation, auto-hiding bar, ⋮ menu, home screen wit
 
 - [ ] **Signing:** release signing config with the key kept outside the repo (CI secret); Play App Signing enrolled.
 - [ ] **Minify:** turn on R8 (`isMinifyEnabled = true`) and resource shrinking; add keep rules if needed; test the release build on a TV.
-- [ ] **Version:** `versionCode` / `versionName` bumped from 1 / 1.0 and scripted.
+- [x] **Version:** `versionCode` / `versionName` bumped with every release (1.3.5 is versionCode 10).
 - [ ] **Cleartext:** tighten `network_security_config.xml` (it allows cleartext everywhere, with a comment saying to tighten it). Decide on a clear policy for `http://` sites (allow with a "Not secure" indicator, or upgrade to HTTPS first).
 - [ ] **Backups:** set `allowBackup="false"` or add backup rules that exclude favourites, recents and icons.
 - [ ] **Privacy fixes:** clear `files/icons` in Clear browsing data; only fetch icons for sites the user has visited or saved; send `Sec-GPC: 1`; isolate or clear web storage in private mode on WebViews without `MULTI_PROFILE` (or warn in the private-mode text).
 - [ ] **Per-site pause:** make it also stop cosmetic filtering, the click-trap sweep and YouTube pruning, so pausing is a real escape hatch.
 - [ ] **Phone remote hardening:** done: 128-bit token with constant-time compare, server stops when the app goes to the background, New code unpairs all phones, per-device Disconnect, 64 KB body cap. Left: local-address and `Host` checks, rate limits ([PHONE_REMOTE.md](PHONE_REMOTE.md#implementation-status)).
 - [x] **Search engine:** choice of Google, DuckDuckGo, Bing, Brave, Startpage (Settings → Search).
-- [ ] **Updates vs stores:** builds published to Google Play or the Amazon Appstore must not self-update (store policy). Add a build flag that turns off the in-app update check for store builds.
-- [ ] **Leanback requirements:** banner (present), no touchscreen required (present), every screen usable by D-pad, a privacy policy URL (publish [PRIVACY.md](PRIVACY.md)).
+- [x] **Updates vs stores:** installed from Google Play or the Amazon Appstore, mkTV turns off its own update check, card and rows (`Updates.selfUpdates`, by installer package), so one build serves GitHub and the stores.
+- [x] **Leanback requirements:** banner, leanback launcher, no touchscreen or other implied hardware required, every screen usable by D-pad, privacy policy at https://mktvhub.github.io/privacy.html. See [PLAY_STORE.md](PLAY_STORE.md).
 - [ ] **Store content policy:** listing and screenshots show only licensed content; Popular tiles are mainstream licensed sites; no claims about watching paid content for free.
 - [ ] **Accessibility:** content descriptions on all toolbar buttons (some are missing), readable sizes at 10 ft, colour contrast.
 - [ ] **Fire TV:** test on Fire OS (same APK). Its WebView may lack `MULTI_PROFILE` or `DOCUMENT_START_SCRIPT`; the existing fallbacks must work there. Submit to the Amazon Appstore.

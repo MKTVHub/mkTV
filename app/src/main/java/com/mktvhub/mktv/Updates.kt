@@ -7,6 +7,12 @@ object Updates {
     const val APK_ASSET = "mkTV.apk"
     const val CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000L
 
+    /** App stores that update mkTV themselves; installed from one, mkTV never offers its own update (store policy). */
+    val STORES = setOf("com.android.vending", "com.amazon.venezia")
+
+    /** Sideloaded (adb, a file manager, mkTV's own updater) or unknown: mkTV checks GitHub itself. */
+    fun selfUpdates(installer: String?): Boolean = installer !in STORES
+
     data class Release(val version: String, val apkUrl: String, val size: Long)
 
     /** "v1.2.10-beta" → [1, 2, 10]. Anything after the numeric part is ignored. */
