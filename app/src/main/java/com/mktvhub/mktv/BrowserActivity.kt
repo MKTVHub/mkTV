@@ -1021,9 +1021,6 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val folder = tree.getOrNull(openFolder) as? Bookmarks.Folder
         val favs = prefs.shortcuts
         // With no page behind it, this is the start screen: opaque and nothing to close back to.
-        // Base colour (see-through a little over an open page) under the violet glow of home_bg.
-        ((shortcutsPanel.background.mutate() as android.graphics.drawable.LayerDrawable).getDrawable(0) as android.graphics.drawable.GradientDrawable)
-            .setColor(if (hasPage()) 0xF0101217.toInt() else 0xFF101217.toInt())
         findViewById<View>(R.id.shortcutsClose).visibility = if (hasPage()) View.VISIBLE else View.GONE
         findViewById<View>(R.id.addThisPage).visibility = if (hasPage() && !isFavourite(webView.url)) View.VISIBLE else View.GONE
         findViewById<TextView>(R.id.shortcutsEdit).apply {
