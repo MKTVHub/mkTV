@@ -12,7 +12,7 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 |  settingsPanel    historyPanel  suggestPanel  snackbar      |
 |  watchDock        watchFlash                                |
 |                                                             |
-|  webContainer ── WebView (normal)  or  WebView (private)    |
+|  webContainer ── active tab's WebView (normal or private)   |
 |                   │  page_script.js  (every page)           |
 |                   │  yt_clean.js     (YouTube origins)      |
 |  fullscreenContainer (page's own fullscreen view)           |
@@ -32,6 +32,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `HostRules.kt` | Android-free helpers, unit-tested: `isBlocked` (host or any parent domain), `siteOf` (approximate registrable domain), `sameSite`, `parseHosts`, `isStreamUrl`, `isVariantOf`, `stripTracking` |
 | `WebSearch.kt` | Android-free, unit-tested: search engines, address-bar input → URL (`normalize`), OpenSearch suggestion parsing, Favourites/History matches |
 | `History.kt` | Android-free, unit-tested: history list operations (add with de-duplication and cap, remove, retitle), search, day labels, JSON |
+| `Bookmarks.kt` | Android-free, unit-tested: Favourites as links plus one level of folders, JSON compatible with the old flat list, add/remove/rename/move/move into and out of folders |
+| `Tabs.kt` | `Tab` state and the Android-free, unit-tested `TabPolicy` (live WebView limit, close order, low-memory rule) |
 | `Updates.kt` | Android-free, unit-tested: GitHub release parsing, numeric version comparison, once-a-day check |
 | `PageZoom.kt` | Android-free, unit-tested: zoom levels and steps, per-host keys and storage, when to fall back to full-screen fill |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
@@ -114,18 +116,26 @@ All in the `WebViewClient` created in `createWebView`:
 
 - **`shouldInterceptRequest`** (network thread). Subresource requests to a blocked host get an empty `200 text/plain` response when protection is on. Any URL ending in `.m3u8` or `.mpd` is recorded as a `DetectedStream` with the request's Referer and Origin, unless it is a variant under an already-seen master.
 - **`shouldOverrideUrlLoading`**. Non-web schemes (`intent:`, `market:`, ...) are always blocked. A one-time bypass lets "Open anyway" through. A change of user agent (entering/leaving `youtube.com/tv`) reloads via `load()`. Tracking parameters are stripped from main-frame navigations. When protection is on: navigations to blocked hosts are stopped, and main-frame cross-site navigations without a user gesture and not server redirects are blocked as "sneaky redirects".
-- **`onCreateWindow`**. Pop-ups without a user gesture are dropped. With a gesture, a throwaway WebView catches the target URL; it is opened in the current WebView via `load()` unless it is a blocked host or (with "Block pop-ups" on) a different site. There are no tabs.
+- **`onCreateWindow`**. Pop-ups without a user gesture are dropped. With a gesture, a throwaway WebView catches the target URL; unless it is a blocked host or (with "Block pop-ups" on) a different site, it opens in a new tab (`openInNewTab`), private if the opener is private.
 
 `protectionOn` is `prefs.adBlock && site not in pausedSites`, recomputed on each page start.
 
 ## Private browsing
 
-`enterPrivate()` keeps the normal WebView alive but paused, and creates a second WebView:
+Private browsing is a set of private tabs (see Tabs below). `enterPrivate()` opens a private tab; `inPrivate` means the tab on screen is private. Normal tabs stay alive but paused:
 
-- With `WebViewFeature.MULTI_PROFILE`: the WebView uses a named profile `private` with its own cookies, storage and cache. On exit the WebView is destroyed and the profile deleted (after a short delay, since deletion needs the WebView gone). A leftover profile is deleted at startup and in `onDestroy`.
+- With `WebViewFeature.MULTI_PROFILE`: every private tab's WebView uses a named profile `private` with its own cookies, storage and cache. On exit every private tab is destroyed and the profile deleted (after a short delay, since deletion needs all its WebViews gone). A leftover profile is deleted at startup and in `onDestroy`.
 - Without it: cookies are refused globally while private, and the cache is disabled. Web storage is still the shared default store (see [PRIVACY.md](PRIVACY.md)).
 
 Release builds add `FLAG_SECURE` while private.
+
+## Tabs
+
+`Tabs.kt` holds `Tab` (its WebView or, once discarded, its last URL, title and `saveState` bundle, in memory only) and the pure `TabPolicy` (unit-tested): at most `MAX_LIVE` (6) live WebViews, least recently used discarded first, never the active tab; at most `MAX_TABS` (20) tabs; after a close, the most recently used tab of the same kind (private or normal) comes back; `onTrimMemory` at RUNNING_LOW/CRITICAL or BACKGROUND and worse discards every background tab.
+
+`webView` is always the active tab's WebView. Every tab's WebView comes from the single `createWebView(isPrivate, tab)`, so clients, scripts, user agent and blocking are identical. The clients capture their `Tab`: `tab.active` (`@Volatile`) keeps background tabs from counting blocks or adding streams for the page on screen, and `tab.host` is the opener site for the redirect and pop-up rules. `showTab` pauses the old tab (media paused by script, then `WebView.onPause`; `pauseTimers` is global, so it is not used), attaches the new one and resets the page state (host, protection, shield, streams, address).
+
+Back: when the page can't go back and the current kind has more than one tab, `onBackPressed` closes the tab (`closeTab`). The switcher is a sub-menu of the ⋮ menu (`showTabsMenu`); holding Menu opens it directly.
 
 ## User agents
 

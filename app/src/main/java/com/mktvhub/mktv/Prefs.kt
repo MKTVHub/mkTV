@@ -40,18 +40,14 @@ class Prefs(context: Context) {
     var desktopMode: Boolean
         get() = p.getBoolean("desktop_mode", false)
         set(v) = p.edit().putBoolean("desktop_mode", v).apply()
-    /** User-saved shortcuts as (title, url) pairs. */
-    var shortcuts: List<Pair<String, String>>
-        get() {
-            val raw = p.getString("shortcuts", null) ?: return DEFAULT_SHORTCUTS
-            val arr = org.json.JSONArray(raw)
-            return (0 until arr.length()).map { arr.getJSONObject(it).let { o -> o.getString("title") to o.getString("url") } }
-        }
-        set(v) {
-            val arr = org.json.JSONArray()
-            v.forEach { (t, u) -> arr.put(org.json.JSONObject().put("title", t).put("url", u)) }
-            p.edit().putString("shortcuts", arr.toString()).apply()
-        }
+    /** Favourites: links and one level of folders (see [Bookmarks]); still stored under the old "shortcuts" key. */
+    var bookmarks: List<Bookmarks.Node>
+        get() = bookmarksCache ?: (p.getString("shortcuts", null)?.let { Bookmarks.parse(it) } ?: DEFAULT_SHORTCUTS).also { bookmarksCache = it }
+        set(v) { bookmarksCache = v; p.edit().putString("shortcuts", Bookmarks.toJson(v)).apply() }
+    @Volatile private var bookmarksCache: List<Bookmarks.Node>? = null // read on every address-bar keystroke and by the phone remote
+    /** Every favourite as (title, url), folders flattened. Change them through [bookmarks]. */
+    val shortcuts: List<Pair<String, String>>
+        get() = Bookmarks.flatten(bookmarks).map { it.title to it.url }
 
     /** The home screen's Popular row; the user can remove sites and add others. */
     var popular: List<Pair<String, String>>
@@ -232,6 +228,6 @@ class Prefs(context: Context) {
             "SoundCloud" to "https://soundcloud.com/",
             "Wikipedia" to "https://www.wikipedia.org/",
         )
-        private val DEFAULT_SHORTCUTS = listOf("Google" to "https://www.google.com/")
+        private val DEFAULT_SHORTCUTS = listOf<Bookmarks.Node>(Bookmarks.Link("Google", "https://www.google.com/"))
     }
 }

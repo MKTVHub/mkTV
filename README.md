@@ -12,7 +12,8 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 
 - **Jump navigation.** ▲▼◀▶ move a highlight between links and buttons; OK clicks, hold OK to long-press. Hold ▼ or ▲ to jump to a site's fixed bottom or top bar. Prefer a mouse? Switch to **pointer mode**.
 - **Out of the way.** The top bar hides while you browse and comes back when you need it.
-- **Home screen.** Popular sites, your Favourites and Recently visited, one press away.
+- **Home screen.** Popular sites, your Favourites and Recently visited, one press away Rename, reorder and group Favourites into folders right on the TV.
+- **Tabs.** Up to six live tabs (more sleep and reload when you return). A pop-up you clicked opens in a new tab; Back on its first page closes it and returns you. Switch from ⋮ → Tabs or by holding Menu.
 - **Smart address bar.** Choose Google, DuckDuckGo, Bing, Brave or Startpage. As you type, it suggests matching Favourites and History pages, plus search suggestions from your engine if you turn them on (off by default, never in private browsing).
 - **Voice search.** Press the mic in the toolbar and say a search or a website.
 - **History.** Every page you've opened, grouped by day, searchable and remote-friendly. Remove single pages or clear it all.

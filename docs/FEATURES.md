@@ -34,9 +34,9 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## ⋮ menu
 
-**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Zoom (current level), Desktop site (On / Off), History, Phone remote, Clear browsing data…, Settings. Phone remote (see below).
+**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Tabs (n), Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Zoom (current level), Desktop site (On / Off), History, Phone remote, Share Wi-Fi, Clear browsing data…, Settings, About mkTV. Phone remote (see below). The menu scrolls when it is taller than the screen.
 
-**Where.** `buildMenu`, `showClearMenu`, `clearData`, `showZoomMenu`.
+**Where.** `buildMenu`, `showTabsMenu`, `showClearMenu`, `clearData`, `showZoomMenu`.
 
 **Clear browsing data (menu).** Checkboxes for History (back/forward, the History page and Recently visited, on by default), Cookies & site data (off by default) and Cached images & files (on by default).
 
@@ -46,7 +46,7 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 **What.** The start screen (and the ⌂ button) shows three rows:
 - **Popular:** YouTube (opens `youtube.com/tv`, the TV interface), YouTube Music, TikTok, Twitch, Dailymotion.
-- **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. Edit removes them.
+- **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. One level of **folders**: a folder tile shows how many sites it holds; OK opens it in the same grid, and Back (or "◀ Favourites") returns. Adding while a folder is open puts the site in that folder. In **Edit**, OK on a tile chooses it and shows its actions under the grid: ◀ Move / Move ▶ (reorder), a name field (rename), Move into a folder / Move out of folder, Open folder, Remove. "＋ New folder" sits in the section tools. Everything saves as you change it. Removing a folder keeps its sites: they go back to the top level.
 - **Recently visited:** up to 10 shown (12 stored), one per site, newest first, excluding favourites. Not shown in private mode.
 
 The header has **History** (see below) and **Private browsing** buttons. When a newer mkTV is available, an update card appears at the top (see [In-app updates](#in-app-updates)).
@@ -55,9 +55,9 @@ Settings → Start screen can replace it with a fixed home page address.
 
 **How.** Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none.
 
-**Where.** `// region Shortcuts`, `BrowserActivity.POPULAR`, `Prefs.shortcuts`, `Prefs.recent`.
+**Where.** `// region Shortcuts` (Favourites folders and edit actions: `renderFavourites`, `renderFavActions`), `Bookmarks.kt` (pure tree operations, tested in `BookmarksTest`), `Prefs.bookmarks` (still stored under the old `shortcuts` key: links are `{title,url}`, a folder is `{title,items}`; old lists load unchanged), `Prefs.shortcuts` (flattened), `Prefs.recent`. The phone remote's `/api/home` lists favourites flattened, folders opened in place.
 
-**Limits.** The icon fetch contacts every site on the home screen once, including Popular sites you have never opened (not in private mode). See [PRIVACY.md](PRIVACY.md).
+**Limits.** Once you make a folder, installing an older mkTV over this one is not supported: older builds can't read folders. The icon fetch contacts every site on the home screen once, including Popular sites you have never opened (not in private mode). See [PRIVACY.md](PRIVACY.md).
 
 ## History
 
@@ -162,7 +162,7 @@ Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or n
 - **Network:** subresource requests to blocked hosts (and their subdomains) get an empty response, unless the host (or a parent domain) is on the allowlist. The blocked set is `assets/adhosts.txt` (a small, conservative list) plus every filter list that is on, merged into one deduplicated set (see Filter lists below).
 - **Cosmetic:** `page_script.js` hides common ad containers with CSS.
 - **Click traps:** `page_script.js` removes invisible full-screen layers that turn any click into a pop-up (fixed/absolute, z-index ≥ 100, over half the viewport, nearly transparent, no media and no text). It sweeps for 10 s after load.
-- **Pop-ups:** pop-ups without a click are dropped. Pop-ups from a click are opened only if they stay on the same site and the host is not blocked.
+- **Pop-ups:** pop-ups without a click are dropped. Pop-ups from a click open in a **new tab** (see [Tabs](#tabs)) only if they stay on the same site and the host is not blocked; blocked hosts never get a tab. "Open anyway" on a blocked pop-up also opens it in a new tab.
 - **Redirects:** script-driven jumps to another site without a click are blocked; server redirects are allowed unless blocklisted. Links to apps (`intent:`, `market:` and similar) are always blocked.
 - **Snackbar:** each blocked pop-up or redirect shows a small message with **Open anyway**, which lets that URL through once.
 
@@ -212,11 +212,25 @@ Built-in presets (none bundled; each is downloaded from its author only when on)
 
 **Limits.** YouTube changes often; this needs maintenance. On WebViews without document-start injection it runs later and is less effective.
 
+## Tabs
+
+**What.** Lightweight tabs. ⋮ → **Tabs (n)** (or hold the remote's Menu key) opens the switcher: "＋ New tab" (opens Home), then one row per tab with its icon, title and site. OK switches; ◀▶ reaches the ✕ that closes a tab. A pop-up you clicked opens in a new tab in front, with a short "Opened in a new tab" notice.
+
+**Back.** On a tab's first page (nothing left to go back to) with other tabs open, Back closes the tab and returns to the one you used before it. With one tab, Back works as before (press again to exit). On YouTube TV a short Back goes to the page, so use the switcher there.
+
+**Private tabs.** Tabs opened from a private tab (pop-ups, New tab) are private too, with the same private profile. The switcher shows only the tabs of the current kind. Closing private browsing closes all private tabs; closing the last private tab closes private browsing.
+
+**How.** Up to 6 tabs keep a live WebView; opening or showing more discards the least recently used one, keeping its address and back/forward list in memory, and it reloads when you show it again. At most 20 tabs are kept (the oldest is closed). A tab going to the background has its video and audio paused and its WebView paused. When Android reports low memory (`onTrimMemory`), every background tab is discarded. Tabs are never saved: they don't survive closing the app.
+
+**Where.** `Tabs.kt` (`Tab`, pure `TabPolicy`, tested in `TabsTest`), `// ---- Tabs ----` in `BrowserActivity` (`showTab`, `discardTab`, `closeTab`, `openInNewTab`), `showTabsMenu`, `onCreateWindow`, `onBackPressed`.
+
 ## Private browsing
 
 **What.** ⋮ → Private browsing (or the button on the home screen, or Settings → Privacy). The toolbar turns purple. No history, recents, cookies or site data are kept; everything is deleted when you close private browsing or the app. Blocking stays on, third-party cookies are refused, and release builds hide private pages from Recents and screenshots.
 
-**Where.** `// ---- Private browsing ----`, `createWebView(isPrivate = true)`. Details and limits: [PRIVACY.md](PRIVACY.md).
+Private browsing has its own tabs (see [Tabs](#tabs)).
+
+**Where.** `// ---- Private browsing ----`, `createWebView(isPrivate = true, tab)`. Details and limits: [PRIVACY.md](PRIVACY.md).
 
 ## Tracking-parameter stripping
 

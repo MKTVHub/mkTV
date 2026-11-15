@@ -146,8 +146,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun setupWebView() {
         // Leftover private profile from a crash or force-stop: wipe it.
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }
-        webView = createWebView(isPrivate = false)
-        attach(webView)
+        showTab(newTab(isPrivate = false))
     }
 
     private val multiProfile by lazy { WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE) }
@@ -162,7 +161,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(isPrivate: Boolean): WebView {
+    /** The one place every tab's WebView is made (normal and private), so all share the same clients, scripts and policy. */
+    private fun createWebView(isPrivate: Boolean, tab: Tab): WebView {
         val wv = WebView(this)
         if (isPrivate && multiProfile) {
             // Separate cookie jar, storage and cache; deleted when private browsing closes.
@@ -201,12 +201,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url
                 if (protectionOn && !request.isForMainFrame && blocker.isBlocked(url.host)) {
-                    countBlocked(blockedAds)
+                    if (tab.active) countBlocked(blockedAds) // counters and streams belong to the tab on screen
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
                 }
                 val s = url.toString()
                 // Skip variant playlists that live under an already-seen master playlist.
-                if (HostRules.isStreamUrl(s) && streams.none { it.url == s || HostRules.isVariantOf(s, it.url) }) {
+                if (tab.active && HostRules.isStreamUrl(s) && streams.none { it.url == s || HostRules.isVariantOf(s, it.url) }) {
                     val h = request.requestHeaders.mapKeys { it.key.lowercase() }
                     streams += DetectedStream(s, h["referer"], h["origin"])
                     runOnUiThread { updateStreamButton() }
@@ -223,7 +223,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 }
                 if (bypassOnce == url.toString()) { bypassOnce = null; return false }
                 if (request.isForMainFrame && uaFor(url.toString()) != uaFor(view.url)) {
-                    load(url.toString()); return true
+                    // On this view, not load(): a background tab navigating itself must not load into the tab on screen.
+                    view.settings.userAgentString = uaFor(url.toString()); view.loadUrl(url.toString()); return true
                 }
                 if (request.isForMainFrame && prefs.stripTracking) {
                     val clean = HostRules.stripTracking(url.toString())
@@ -236,7 +237,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                     return true
                 }
                 if (request.isForMainFrame && prefs.blockRedirects && !request.hasGesture() && !request.isRedirect &&
-                    pageHost != null && !HostRules.sameSite(pageHost, url.host)
+                    tab.host != null && !HostRules.sameSite(tab.host, url.host)
                 ) {
                     // Script-driven jump to another site without a click: classic ad redirect.
                     countBlocked(blockedRedirects)
@@ -247,6 +248,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                tab.host = Uri.parse(url).host
+                tab.icon = null
                 if (view !== webView) return
                 pageHost = Uri.parse(url).host
                 protectionOn = isProtected(pageHost)
@@ -321,11 +324,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                     webView.post { temp.destroy() } // temp is never attached, so its own post() would never run
                     val host = Uri.parse(url).host
                     val blocked = protectionOn &&
-                        (blocker.isBlocked(host) || (prefs.blockPopups && !HostRules.sameSite(pageHost, host)))
+                        (blocker.isBlocked(host) || (prefs.blockPopups && !HostRules.sameSite(tab.host, host)))
                     if (blocked) {
                         countBlocked(blockedPopups)
-                        showBlocked("Blocked pop-up · $host", url)
-                    } else load(url)
+                        showBlocked("Blocked pop-up · $host", url, newTab = true)
+                    } else openInNewTab(url, tab.isPrivate) // a private tab's pop-ups stay private
                 }
                 temp.webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(v: WebView, r: WebResourceRequest): Boolean { decide(r.url.toString()); return true }
@@ -349,6 +352,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
 
             override fun onReceivedIcon(view: WebView, icon: Bitmap) {
+                tab.icon = icon // for the tab switcher, memory only
                 // YouTube's TV interface reports the YouTube TV app icon; keep the normal YouTube icon for the tile.
                 if (view === webView && !inPrivate && !isTvSite(view.url)) saveFavicon(icon)
             }
@@ -360,7 +364,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun applyUserAgent() {
-        listOfNotNull(normalWebView, privateWebView, webView).forEach {
+        tabs.mapNotNull { it.webView }.forEach {
             it.settings.userAgentString = uaFor(it.url)
         }
     }
@@ -395,53 +399,141 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     // ---- Private browsing ----
 
-    private var normalWebView: WebView? = null
-    private var privateWebView: WebView? = null
-    private val inPrivate get() = privateWebView != null && webView === privateWebView
+    /** Private browsing is simply "the tab on screen is a private tab"; its pop-ups and new tabs are private too. */
+    private val inPrivate get() = ::activeTab.isInitialized && activeTab.isPrivate
 
     private fun enterPrivate() {
         if (inPrivate) return
-        normalWebView = webView
-        webView.onPause()
         // Without profile support, the only way to keep this session's cookies out of the normal jar is to refuse them.
         if (!multiProfile) CookieManager.getInstance().setAcceptCookie(false)
-        val pw = createWebView(isPrivate = true)
-        privateWebView = pw
-        webView = pw
-        attach(pw)
-        resetPageState()
+        showTab(newTab(isPrivate = true))
         // Keep private pages out of Recents thumbnails and screenshots (release builds; debug stays capturable for testing).
         if (!BuildConfig.DEBUG) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-        applyPrivateLook()
         openShortcuts()
     }
 
+    /** Closes every private tab, then deletes the private profile (or lets cookies back in). */
     private fun exitPrivate() {
-        val pw = privateWebView ?: return
-        val normal = normalWebView ?: return
-        webView = normal
-        attach(normal)
-        normal.onResume()
-        privateWebView = null
-        normalWebView = null
-        pw.stopLoading()
-        pw.clearHistory()
-        pw.destroy()
+        if (tabs.none { it.isPrivate }) return
+        showTab(tabs.filter { !it.isPrivate }.maxByOrNull { it.lastUsed } ?: newTab(isPrivate = false))
+        tabs.filter { it.isPrivate }.forEach { destroyTab(it) }
+        tabs.removeAll { it.isPrivate }
+        privateZoom.clear() // private zoom levels live only as long as private browsing
         if (multiProfile) {
-            // The profile can only be deleted once the WebView is gone.
+            // The profile can only be deleted once all its WebViews are gone.
             root.postDelayed({ runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) } }, 600)
         } else {
             CookieManager.getInstance().setAcceptCookie(true)
         }
         window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        note("Private browsing closed. History, cookies and site data from it are gone.")
+        if (!tabHasPage(activeTab)) openShortcuts() else if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
+    }
+
+    // ---- Tabs: a few WebViews kept alive, the rest reload when shown (see Tabs.kt) ----
+
+    private val tabs = mutableListOf<Tab>()
+    private lateinit var activeTab: Tab
+    private var tabSeq = 0
+    private var tabUse = 0L
+
+    private fun newTab(isPrivate: Boolean): Tab = Tab(++tabSeq, isPrivate).also { tabs += it }
+    private fun tabById(id: Int) = tabs.firstOrNull { it.id == id }
+    /** Like hasPage(), but also true for a sleeping tab whose page is only starting to reload. */
+    private fun tabHasPage(t: Tab) = t.currentUrl.let { it.isNotBlank() && it != "about:blank" }
+    /** Tabs of the current kind: the switcher never mixes private and normal tabs. */
+    private fun modeTabs() = tabs.filter { it.isPrivate == inPrivate }
+
+    /** The tab's WebView, created (and its page restored or reloaded) if it was discarded. */
+    private fun liveWebView(t: Tab): WebView {
+        t.webView?.let { return it }
+        val wv = createWebView(t.isPrivate, t)
+        t.webView = wv
+        val saved = t.state
+        t.state = null
+        if (t.url.isNotBlank()) {
+            wv.settings.userAgentString = uaFor(t.url)
+            if (saved == null || wv.restoreState(saved) == null) wv.loadUrl(t.url)
+        }
+        return wv
+    }
+
+    /** Puts [t] on screen: the old tab is paused (and its media stopped), page state follows the new one. */
+    private fun showTab(t: Tab) {
+        val old = if (::activeTab.isInitialized) activeTab else null
+        if (old != null && old !== t) {
+            exitFullscreen(notifyPage = true)
+            exitFill() // unfills the old page while webView still points at it
+            exitWatch(silent = true)
+            old.active = false
+            old.webView?.let { it.evaluateJavascript(PAUSE_MEDIA_JS, null); it.onPause() }
+        }
+        val wv = liveWebView(t)
+        activeTab = t
+        t.active = true
+        t.lastUsed = ++tabUse
+        webView = wv
+        attach(wv)
+        wv.onResume()
         resetPageState()
-        pageHost = Uri.parse(normal.url ?: "").host
+        pageHost = Uri.parse(t.currentUrl).host
         protectionOn = isProtected(pageHost)
-        urlField.setText(normal.url ?: "")
+        urlField.setText(wv.url ?: t.url)
+        progress.visibility = View.INVISIBLE
         applyPrivateLook()
         updateNav(); updateStar(); updateShield()
-        note("Private browsing closed. History, cookies and site data from it are gone.")
-        if (!hasPage()) openShortcuts() else if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
+        TabPolicy.toClose(tabs.map { it.info() }, t.id).mapNotNull(::tabById).forEach { destroyTab(it); tabs.remove(it) }
+        TabPolicy.toDiscard(tabs.map { it.info() }, t.id).mapNotNull(::tabById).forEach(::discardTab)
+        // attach() removed the focused WebView, so focus fell to the toolbar: give the page the remote back.
+        // (Not at startup: the panels overlayOpen() reads aren't set up yet.)
+        if (old != null && old !== t && !overlayOpen()) leaveToPage()
+    }
+
+    /** Frees the tab's WebView but keeps its address and back/forward list (in memory) for when it is shown again. */
+    private fun discardTab(t: Tab) {
+        val wv = t.webView ?: return
+        if (t === activeTab) return
+        t.url = t.currentUrl; t.title = t.currentTitle
+        t.state = Bundle().also { b -> runCatching { wv.saveState(b) } }
+        t.webView = null
+        (wv.parent as? ViewGroup)?.removeView(wv)
+        wv.stopLoading()
+        wv.destroy()
+    }
+
+    private fun destroyTab(t: Tab) {
+        t.webView?.let { wv ->
+            (wv.parent as? ViewGroup)?.removeView(wv)
+            wv.stopLoading(); wv.clearHistory(); wv.destroy()
+        }
+        t.webView = null; t.state = null; t.icon = null; t.active = false
+    }
+
+    /** Opens [url] in a new tab in front (pop-ups from a click). */
+    private fun openInNewTab(url: String, isPrivate: Boolean) {
+        showTab(newTab(isPrivate))
+        closeShortcuts()
+        load(url)
+        note("Opened in a new tab · Tabs")
+    }
+
+    /** Closes [t]; if it was on screen, the most recently used tab of the same kind comes back. */
+    private fun closeTab(t: Tab) {
+        if (t.isPrivate && tabs.count { it.isPrivate } == 1) { exitPrivate(); return }
+        if (t === activeTab) {
+            val next = TabPolicy.nextAfterClose(tabs.map { it.info() }, t.id)?.let(::tabById)
+            showTab(next ?: newTab(isPrivate = false))
+            if (tabHasPage(activeTab)) closeShortcuts() else openShortcuts()
+        }
+        tabs.remove(t)
+        destroyTab(t)
+    }
+
+    /** Low memory: keep only the tab on screen alive. */
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (!TabPolicy.discardOnTrim(level) || !::activeTab.isInitialized) return
+        TabPolicy.background(tabs.map { it.info() }, activeTab.id).mapNotNull(::tabById).forEach(::discardTab)
     }
 
     private fun resetPageState() {
@@ -449,7 +541,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         blockedAds.set(0); blockedPopups.set(0); blockedRedirects.set(0); updateShield()
         cursor.showRing(null)
         if (webView.url.isNullOrBlank()) urlField.setText("")
-        filling = false; privateZoom.clear()
+        filling = false
     }
 
     private fun applyPrivateLook() {
@@ -485,7 +577,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.panelToggle).setOnClickListener { toggleSitePause() }
         findViewById<View>(R.id.snackClose).setOnClickListener { hideSnackbar() }
         findViewById<View>(R.id.snackAction).setOnClickListener {
-            snackUrl?.let { bypassOnce = it; load(it) }
+            snackUrl?.let { bypassOnce = it; if (snackNewTab) openInNewTab(it, inPrivate) else load(it) }
             hideSnackbar()
         }
         btnStream.setOnClickListener { openStreamPicker() }
@@ -754,11 +846,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private var snackUrl: String? = null
+    /** "Open anyway" on a blocked pop-up opens it in a new tab, like an allowed pop-up. */
+    private var snackNewTab = false
     private val hideSnack = Runnable { hideSnackbar() }
 
     /** Shows what was blocked, with "Open anyway" when there is a URL to open. Any thread. */
-    private fun showBlocked(message: String, url: String?) = runOnUiThread {
+    private fun showBlocked(message: String, url: String?, newTab: Boolean = false) = runOnUiThread {
         snackUrl = url
+        snackNewTab = newTab
         findViewById<TextView>(R.id.snackText).text = message
         findViewById<View>(R.id.snackAction).visibility = if (url != null) View.VISIBLE else View.GONE
         if (snackbar.visibility != View.VISIBLE) {
@@ -825,6 +920,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private lateinit var shortcutsPanel: View
     private var editingShortcuts = false
     private var editingPopular = false
+    /** Top-level index of the Favourites folder being shown, or -1 for the top level. */
+    private var openFolder = -1
+    /** Favourite whose actions (rename, move, folder, remove) show under the grid in edit mode. */
+    private var selectedFav: Bookmarks.Loc? = null
 
     private fun setupShortcuts() {
         shortcutsPanel = findViewById(R.id.shortcutsPanel)
@@ -832,6 +931,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.homePrivate).setOnClickListener { if (inPrivate) exitPrivate() else enterPrivate() }
         findViewById<TextView>(R.id.shortcutsEdit).setOnClickListener {
             editingShortcuts = !editingShortcuts
+            selectedFav = null
             renderShortcuts()
             findViewById<ViewGroup>(R.id.shortcutsGrid).getChildAt(0)?.requestFocus()
             if (!editingShortcuts) findViewById<View>(R.id.shortcutsEdit).requestFocus()
@@ -877,6 +977,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         historyPanel.visibility = View.GONE
         editingShortcuts = false
         editingPopular = false
+        openFolder = -1
+        selectedFav = null
         renderShortcuts()
         shortcutsPanel.visibility = View.VISIBLE
         findViewById<View>(R.id.shortcutsScroll).scrollTo(0, 0)
@@ -894,6 +996,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun renderShortcuts() {
         val focusedTag = currentFocus?.tag as? String
+        val tree = prefs.bookmarks
+        if (tree.getOrNull(openFolder) !is Bookmarks.Folder) openFolder = -1
+        val folder = tree.getOrNull(openFolder) as? Bookmarks.Folder
         val favs = prefs.shortcuts
         // With no page behind it, this is the start screen: opaque and nothing to close back to.
         shortcutsPanel.setBackgroundColor(if (hasPage()) 0xF0101217.toInt() else 0xFF101217.toInt())
@@ -901,9 +1006,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.addThisPage).visibility = if (hasPage() && !isFavourite(webView.url)) View.VISIBLE else View.GONE
         findViewById<TextView>(R.id.shortcutsEdit).apply {
             text = if (editingShortcuts) "Stop editing" else "Edit"
-            visibility = if (favs.isEmpty()) View.GONE else View.VISIBLE
+            visibility = if (tree.isEmpty()) View.GONE else View.VISIBLE
         }
-        findViewById<View>(R.id.shortcutsEmpty).visibility = if (favs.isEmpty()) View.VISIBLE else View.GONE
+        findViewById<TextView>(R.id.shortcutsEmpty).apply {
+            visibility = if (tree.isEmpty() || folder?.items?.isEmpty() == true) View.VISIBLE else View.GONE
+            text = if (folder != null) "This folder is empty. In Edit, choose a favourite and “Move into” this folder, or type an address above."
+                else "No favourites yet. Open a site and press ☆ in the toolbar, or type an address above."
+        }
 
         renderUpdateCard()
         findViewById<TextView>(R.id.homeTitle).text = if (inPrivate) "Private browsing" else "Home"
@@ -925,7 +1034,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         fillGrid(R.id.popularGrid, popular, height = 104, iconSize = 44, kind = "pop")
         renderPopularAdd(popular)
         arrangeHome()
-        fillGrid(R.id.shortcutsGrid, favs, height = 150, iconSize = 56, kind = "fav")
+        renderFavourites(tree, folder)
         val recent = if (inPrivate || "rec" in prefs.hiddenSections) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
         findViewById<View>(R.id.recentTitle).visibility = if (recent.isEmpty()) View.GONE else View.VISIBLE
         fillGrid(R.id.recentGrid, recent, height = 130, iconSize = 44, kind = "rec")
@@ -941,6 +1050,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             val idx = focusedTag.substringAfter("pop:").substringBefore('|').toIntOrNull() ?: 0
             (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1)) ?: findViewById(R.id.popularEdit)).requestFocus()
         }
+        if (focusedTag != null && focusedTag.startsWith("favact:"))
+            (favActions.findViewWithTag<View>(focusedTag)?.takeIf { it.isFocusable } ?: findViewById<ViewGroup>(R.id.shortcutsGrid).getChildAt(0)
+                ?: findViewById(R.id.shortcutsEdit)).requestFocus()
         if (focusedTag != null && focusedTag.startsWith("sug:"))
             (findViewById<ViewGroup>(R.id.popularSuggest).getChildAt(0) ?: findViewById<View>(R.id.popularAddField)).requestFocus()
         if (!inPrivate) fetchMissingIcons(popular + favs + recent)
@@ -989,6 +1101,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
         tool("↑  Move up", pos > 0) { move(-1) }
         tool("↓  Move down", pos < order.size - 1) { move(1) }
+        tool("＋  New folder", id == "fav" && openFolder < 0) { newFavFolder() }
         tool("Hide ${sectionName(id)}", true) {
             prefs.hiddenSections = prefs.hiddenSections + id
             if (id == "pop") editingPopular = false else editingShortcuts = false
@@ -1033,7 +1146,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         note("Added $title to Popular")
     }
 
-    private fun fillGrid(gridId: Int, items: List<Pair<String, String>>, height: Int, iconSize: Int, kind: String) {
+    private fun fillGrid(gridId: Int, items: List<Pair<String, String>>, height: Int, iconSize: Int, kind: String,
+                         tileFor: ((Int, String, String) -> View)? = null) {
         val grid = findViewById<android.widget.GridLayout>(gridId)
         grid.removeAllViews()
         val cols = grid.columnCount
@@ -1041,7 +1155,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val gap = dp(16)
         val tileW = (gridWidth - gap * (cols - 1)) / cols
         items.forEachIndexed { i, (title, url) ->
-            val tile = buildTile(title, url, iconSize, kind)
+            val tile = tileFor?.invoke(i, title, url) ?: buildTile(title, url, iconSize, kind)
             tile.tag = "$kind:$i|$url"
             // ▶ on a row's last tile stays put instead of jumping up to the toolbar's ⋮
             if (i % cols == cols - 1 || i == items.size - 1) { tile.id = View.generateViewId(); tile.nextFocusRightId = tile.id }
@@ -1053,17 +1167,20 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
-    private fun buildTile(title: String, url: String, iconSize: Int, kind: String): View {
-        val deletable = (kind == "fav" && editingShortcuts) || (kind == "pop" && editingPopular)
+    /** [onClick] replaces the default open/delete action; [badge] (with [badgeColor]) replaces the edit-mode ✕. */
+    private fun buildTile(title: String, url: String, iconSize: Int, kind: String,
+                          onClick: (() -> Unit)? = null, badge: String? = null, badgeColor: Int = 0xFFEF4444.toInt()): View {
+        val deletable = onClick == null && ((kind == "fav" && editingShortcuts) || (kind == "pop" && editingPopular))
         val d = resources.displayMetrics.density
         val tile = FrameLayout(this).apply {
             setBackgroundResource(R.drawable.tile_bg)
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                if (deletable) {
+                if (onClick != null) onClick()
+                else if (deletable) {
                     if (kind == "pop") prefs.popular = prefs.popular.filterNot { it.second == url }
-                    else prefs.shortcuts = prefs.shortcuts.filterNot { it.second == url }
+                    else prefs.bookmarks = Bookmarks.removeUrl(prefs.bookmarks, url)
                     renderShortcuts()
                 } else {
                     closeShortcuts()
@@ -1096,21 +1213,257 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         tile.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (deletable) {
+        if (deletable || badge != null) {
             tile.addView(TextView(this).apply {
-                text = "✕"
+                text = badge ?: "✕"
                 setTextColor(android.graphics.Color.WHITE)
                 textSize = 14f
                 gravity = android.view.Gravity.CENTER
                 background = android.graphics.drawable.GradientDrawable().apply {
                     shape = android.graphics.drawable.GradientDrawable.OVAL
-                    setColor(0xFFEF4444.toInt())
+                    setColor(badgeColor)
                 }
             }, FrameLayout.LayoutParams(dp(if (kind == "pop") 22 else 28), dp(if (kind == "pop") 22 else 28), android.view.Gravity.TOP or android.view.Gravity.END).apply {
                 setMargins(0, dp(6), dp(6), 0)
             })
         }
         return tile
+    }
+
+    // ---- Favourites: folders and edit-mode actions (pure tree operations in Bookmarks.kt) ----
+
+    /** "◀ Favourites › Folder" above the grid while a folder is open; OK (or Back) returns to the top level. */
+    private val favFolderBar: TextView by lazy {
+        TextView(this).apply {
+            setTextColor(android.graphics.Color.WHITE); textSize = 15f
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setBackgroundResource(R.drawable.toolbar_button); setPadding(dp(16), 0, dp(16), 0)
+            isClickable = true; isFocusable = true; tag = "favbar"
+            setOnClickListener { closeFavFolder() }
+        }.also { bar ->
+            val section = findViewById<LinearLayout>(R.id.favSection)
+            section.addView(bar, section.indexOfChild(findViewById(R.id.addRow)),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { bottomMargin = dp(14) })
+        }
+    }
+
+    /** Rename / move / folder / remove for the selected favourite, right under the grid (edit mode only). */
+    private val favActions: LinearLayout by lazy {
+        LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }.also { box ->
+            val section = findViewById<LinearLayout>(R.id.favSection)
+            section.addView(box, section.indexOfChild(findViewById(R.id.shortcutsGrid)) + 1,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(16) })
+        }
+    }
+
+    private fun renderFavourites(tree: List<Bookmarks.Node>, folder: Bookmarks.Folder?) {
+        favFolderBar.visibility = if (folder != null) View.VISIBLE else View.GONE
+        if (folder != null) favFolderBar.text = "◀  Favourites  ›  ${folder.title}"
+        val nodes: List<Bookmarks.Node> = folder?.items ?: tree
+        val sel = selectedFav?.takeIf { editingShortcuts && it.folder == openFolder }
+        val items = nodes.map { n -> n.title to ((n as? Bookmarks.Link)?.url ?: "folder:${n.title}") }
+        fillGrid(R.id.shortcutsGrid, items, height = 150, iconSize = 56, kind = "fav") { i, title, url ->
+            val n = nodes[i]
+            val loc = Bookmarks.Loc(openFolder, i)
+            val selected = sel == loc
+            val badge = if (!editingShortcuts) null else if (selected) "✓" else "✎"
+            val color = if (selected) 0xFF10B981.toInt() else 0xFF3B82F6.toInt()
+            if (n is Bookmarks.Folder) folderTile(n, { onFavTile(n, loc) }, badge, color)
+            else buildTile(title, url, 56, "fav", { onFavTile(n, loc) }, badge, color)
+        }
+        renderFavActions(tree)
+    }
+
+    /** OK on a favourite: open it, open the folder, or (edit mode) choose it for the actions below the grid. */
+    private fun onFavTile(n: Bookmarks.Node, loc: Bookmarks.Loc) {
+        when {
+            editingShortcuts -> {
+                selectedFav = if (selectedFav == loc) null else loc
+                renderShortcuts()
+                (selectedFav?.let { firstFocusable(favActions) } ?: favTile(loc.index))?.requestFocus()
+            }
+            n is Bookmarks.Folder -> openFavFolder(loc.index)
+            n is Bookmarks.Link -> { closeShortcuts(); load(n.url) }
+        }
+    }
+
+    private fun favTile(index: Int): View? {
+        val grid = findViewById<ViewGroup>(R.id.shortcutsGrid)
+        return grid.getChildAt(index.coerceIn(0, maxOf(0, grid.childCount - 1)))
+    }
+
+    private fun firstFocusable(v: View): View? {
+        if (v.visibility != View.VISIBLE) return null
+        if (v.isFocusable) return v
+        if (v is ViewGroup) for (i in 0 until v.childCount) firstFocusable(v.getChildAt(i))?.let { return it }
+        return null
+    }
+
+    private fun openFavFolder(index: Int) {
+        openFolder = index
+        selectedFav = null
+        renderShortcuts()
+        (findViewById<ViewGroup>(R.id.shortcutsGrid).getChildAt(0) ?: favFolderBar).requestFocus()
+    }
+
+    private fun closeFavFolder() {
+        val was = openFolder
+        openFolder = -1
+        selectedFav = null
+        renderShortcuts()
+        favTile(was)?.requestFocus()
+    }
+
+    private fun folderTile(f: Bookmarks.Folder, onClick: () -> Unit, badge: String?, badgeColor: Int): View {
+        val tile = FrameLayout(this).apply {
+            setBackgroundResource(R.drawable.tile_bg)
+            isClickable = true; isFocusable = true
+            setOnClickListener { onClick() }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+        col.addView(android.widget.ImageView(this).apply { setImageResource(R.drawable.ic_folder); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER },
+            LinearLayout.LayoutParams(dp(56), dp(56)))
+        col.addView(TextView(this).apply {
+            text = f.title; setTextColor(android.graphics.Color.WHITE); textSize = 15f
+            gravity = android.view.Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(0, dp(10), 0, 0)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        col.addView(TextView(this).apply {
+            text = when (f.items.size) { 0 -> "Empty folder"; 1 -> "1 site"; else -> "${f.items.size} sites" }
+            setTextColor(0xFF9CA3AF.toInt()); textSize = 12f; gravity = android.view.Gravity.CENTER
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        tile.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        tile.addView(TextView(this).apply {
+            text = f.items.size.toString(); setTextColor(android.graphics.Color.WHITE); textSize = 12f
+            gravity = android.view.Gravity.CENTER; setBackgroundResource(R.drawable.count_chip); setPadding(dp(8), 0, dp(8), 0)
+        }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(22), android.view.Gravity.TOP or android.view.Gravity.START).apply { setMargins(dp(8), dp(8), 0, 0) })
+        if (badge != null) tile.addView(TextView(this).apply {
+            text = badge; setTextColor(android.graphics.Color.WHITE); textSize = 14f; gravity = android.view.Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(badgeColor) }
+        }, FrameLayout.LayoutParams(dp(28), dp(28), android.view.Gravity.TOP or android.view.Gravity.END).apply { setMargins(0, dp(6), dp(6), 0) })
+        return tile
+    }
+
+    private fun favButton(label: String, tag: String, enabled: Boolean, danger: Boolean = false, action: () -> Unit) = TextView(this).apply {
+        text = label; textSize = 14f; gravity = android.view.Gravity.CENTER
+        setTextColor(if (danger) 0xFFFCA5A5.toInt() else android.graphics.Color.WHITE)
+        setBackgroundResource(if (danger) R.drawable.btn_danger else R.drawable.toolbar_button)
+        setPadding(dp(16), 0, dp(16), 0)
+        isClickable = enabled; isFocusable = enabled; alpha = if (enabled) 1f else 0.4f
+        this.tag = tag
+        setOnClickListener { action() }
+    }
+
+    /** Changes save as they happen: there is no Done button. */
+    private fun renderFavActions(tree: List<Bookmarks.Node>) {
+        favActions.removeAllViews()
+        val sel = selectedFav?.takeIf { editingShortcuts && it.folder == openFolder }
+        val node = sel?.let { Bookmarks.get(tree, it) }
+        if (sel == null || node == null) { selectedFav = null; favActions.visibility = View.GONE; return }
+        favActions.visibility = View.VISIBLE
+        val isFolder = node is Bookmarks.Folder
+        val count = (tree.getOrNull(sel.folder) as? Bookmarks.Folder)?.items?.size ?: tree.size
+        fun lp(end: Int = 10) = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(end) }
+
+        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        row1.addView(favButton("◀  Move", "favact:left", sel.index > 0) { moveFav(sel, -1) }, lp())
+        row1.addView(favButton("Move  ▶", "favact:right", sel.index < count - 1) { moveFav(sel, 1) }, lp())
+        val field = EditText(this).apply {
+            setText(node.title)
+            hint = if (isFolder) "Folder name" else "Name"
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_DONE
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setBackgroundResource(R.drawable.add_field)
+            setTextColor(android.graphics.Color.WHITE); setHintTextColor(0xFF7A7F8A.toInt()); textSize = 16f
+            setPadding(dp(16), 0, dp(16), 0)
+            tag = "favact:name"
+        }
+        var saved = node.title
+        fun commit(): Boolean {
+            val v = field.text.toString().trim()
+            if (v.isEmpty() || v == saved) return false
+            saved = v
+            prefs.bookmarks = Bookmarks.rename(prefs.bookmarks, sel, v)
+            return true
+        }
+        field.setOnEditorActionListener { _, _, _ ->
+            hideKeyboard(field)
+            if (commit()) renderShortcuts()
+            favActions.findViewWithTag<View>("favact:name")?.requestFocus()
+            true
+        }
+        // Leaving the field saves too; re-render afterwards so the tile shows the new name.
+        field.setOnFocusChangeListener { _, has -> if (!has && commit()) root.post { if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts() } }
+        row1.addView(field, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(10) })
+        row1.addView(favButton(if (isFolder) "Remove folder" else "Remove", "favact:remove", true, danger = true) { removeFav(sel, node) }, lp(0))
+        favActions.addView(row1, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+        when {
+            isFolder -> row2.addView(favButton("Open folder", "favact:open", true) { openFavFolder(sel.index) }, lp())
+            sel.inFolder -> row2.addView(favButton("Move out of folder", "favact:out", true) { moveFavOut(sel) }, lp())
+            else -> tree.forEachIndexed { j, f ->
+                if (f is Bookmarks.Folder) row2.addView(favButton("Move into  ${f.title}", "favact:into:$j", true) { moveFavInto(sel, j, f.title) }, lp())
+            }
+        }
+        if (row2.childCount > 0) favActions.addView(android.widget.HorizontalScrollView(this).apply {
+            isFocusable = false; isHorizontalScrollBarEnabled = false; addView(row2)
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) })
+        favActions.addView(TextView(this).apply {
+            text = when {
+                isFolder -> "Removing a folder keeps its sites: they go back to Favourites."
+                !sel.inFolder && tree.none { it is Bookmarks.Folder } -> "Tip: “＋ New folder” above groups favourites."
+                else -> "Changes are saved as you make them."
+            }
+            setTextColor(0xFF9CA3AF.toInt()); textSize = 13f; setPadding(dp(4), dp(8), 0, 0)
+        })
+    }
+
+    private fun moveFav(sel: Bookmarks.Loc, by: Int) {
+        val (list, at) = Bookmarks.move(prefs.bookmarks, sel, by)
+        prefs.bookmarks = list
+        selectedFav = at
+        renderShortcuts()
+        (favActions.findViewWithTag<View>(if (by < 0) "favact:left" else "favact:right")?.takeIf { it.isFocusable } ?: firstFocusable(favActions))?.requestFocus()
+    }
+
+    private fun removeFav(sel: Bookmarks.Loc, node: Bookmarks.Node) {
+        prefs.bookmarks = Bookmarks.remove(prefs.bookmarks, sel)
+        selectedFav = null
+        if (prefs.bookmarks.isEmpty()) editingShortcuts = false
+        note(if (node is Bookmarks.Folder) "Folder removed. Its sites are back in Favourites" else "Removed ${node.title}")
+        renderShortcuts()
+        (favTile(sel.index) ?: findViewById(R.id.addField)).requestFocus()
+    }
+
+    private fun moveFavInto(sel: Bookmarks.Loc, folder: Int, name: String) {
+        prefs.bookmarks = Bookmarks.moveInto(prefs.bookmarks, sel, folder)
+        selectedFav = null
+        note("Moved into $name")
+        renderShortcuts()
+        favTile(sel.index)?.requestFocus()
+    }
+
+    private fun moveFavOut(sel: Bookmarks.Loc) {
+        prefs.bookmarks = Bookmarks.moveOut(prefs.bookmarks, sel)
+        selectedFav = null
+        note("Moved out of the folder")
+        renderShortcuts()
+        (favTile(sel.index) ?: favFolderBar).requestFocus()
+    }
+
+    private fun newFavFolder() {
+        prefs.bookmarks = Bookmarks.newFolder(prefs.bookmarks)
+        openFolder = -1
+        selectedFav = Bookmarks.Loc(-1, prefs.bookmarks.size - 1)
+        renderShortcuts()
+        favActions.findViewWithTag<View>("favact:name")?.requestFocus()
+        note("Folder added: press OK on its name to rename it")
     }
 
     // ---- Favourites / recent ----
@@ -1126,7 +1479,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (!hasPage()) return
         val url = webView.url ?: return
         if (isFavourite(url)) {
-            prefs.shortcuts = prefs.shortcuts.filterNot { sameUrl(it.second, url) }
+            prefs.bookmarks = Bookmarks.removeUrl(prefs.bookmarks, url)
             note("Removed from Favourites")
         } else {
             addShortcut(webView.title?.takeIf { it.isNotBlank() } ?: prettyHost(url), url)
@@ -1247,7 +1600,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun addShortcut(title: String, url: String) {
         if (url.isBlank() || url == "about:blank") return
-        prefs.shortcuts = prefs.shortcuts.filterNot { sameUrl(it.second, url) } + (title to url)
+        // While a folder is open on Home, "Add" puts the site in that folder.
+        val into = if (shortcutsPanel.visibility == View.VISIBLE) openFolder else -1
+        prefs.bookmarks = Bookmarks.add(prefs.bookmarks, Bookmarks.Link(title, url), into)
         note("Added to Favourites: $title")
         updateStar()
         if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
@@ -1672,8 +2027,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             })
             card.addView(toggleRow("Block third-party cookies", "Stops cross-site tracking cookies. May break some sign-ins and embedded players.", prefs.blockThirdPartyCookies) {
                 prefs.blockThirdPartyCookies = it
-                normalWebView?.let { w -> CookieManager.getInstance().setAcceptThirdPartyCookies(w, !it) }
-                if (!inPrivate) CookieManager.getInstance().setAcceptThirdPartyCookies(webView, !it)
+                tabs.filter { t -> !t.isPrivate }.mapNotNull { t -> t.webView }.forEach { w -> CookieManager.getInstance().setAcceptThirdPartyCookies(w, !it) }
                 settingsDirty = true
             })
         }
@@ -2645,6 +2999,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 setOnClickListener { action() }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
+        item(R.drawable.ic_tabs, "Tabs (${modeTabs().size})", if (inPrivate) "Private" else null) { showTabsMenu() }
         item(if (fav) R.drawable.ic_star else R.drawable.ic_star_border, if (fav) "Remove from Favourites" else "Add to Favourites", enabled = hasPage()) {
             toggleFavourite(); buildMenu()
         }
@@ -2667,6 +3022,76 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         item(R.drawable.ic_info, "About mkTV", currentVersion) { showAboutMenu() }
         trapMenuFocus()
         if (focusedTag != null) menuPanel.findViewWithTag<View>(focusedTag)?.requestFocus()
+    }
+
+    // ---- Tab switcher (inside the ⋮ menu; hold Menu to open it directly) ----
+
+    private fun showTabsMenu(focusTag: String? = null) {
+        if (!menuOpen()) openMenu()
+        inSubMenu = true
+        menuPanel.removeAllViews()
+        menuPanel.addView(TextView(this).apply {
+            text = if (inPrivate) "Private tabs" else "Tabs"
+            setTextColor(android.graphics.Color.WHITE); textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(14), dp(10), dp(14), dp(6))
+        })
+        menuPanel.addView(rowContainer().apply {
+            minimumHeight = dp(52); isClickable = true; isFocusable = true; tag = "tabs:new"
+            addView(TextView(context).apply { text = "＋"; setTextColor(android.graphics.Color.WHITE); textSize = 18f; gravity = android.view.Gravity.CENTER },
+                LinearLayout.LayoutParams(dp(28), dp(28)))
+            addView(TextView(context).apply { text = "New tab"; setTextColor(android.graphics.Color.WHITE); textSize = 16f; setPadding(dp(14), 0, 0, 0) })
+            setOnClickListener { inSubMenu = false; closeMenu(); showTab(newTab(inPrivate)); openShortcuts() }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // Last child, so on a short screen the list scrolls instead of pushing the menu off the bottom.
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        menuPanel.addView(android.widget.ScrollView(this).apply { isFocusable = false; addView(list) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        modeTabs().forEach { t ->
+            val url = t.currentUrl
+            val blank = url.isBlank() || url == "about:blank"
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL }
+            val main = rowContainer().apply {
+                minimumHeight = dp(56); setPadding(dp(14), dp(6), dp(10), dp(6))
+                isClickable = true; isFocusable = true; tag = "tab:${t.id}"
+                val icon: View = t.icon?.let { bmp -> android.widget.ImageView(context).apply { setImageBitmap(bmp); scaleType = android.widget.ImageView.ScaleType.FIT_CENTER } }
+                    ?: if (blank) android.widget.ImageView(context).apply { setImageResource(R.drawable.ic_home) }
+                    else siteAvatar(url, t.currentTitle).apply { (this as? TextView)?.textSize = 13f }
+                addView(icon, LinearLayout.LayoutParams(dp(28), dp(28)))
+                val title = if (blank) "Home" else t.currentTitle.ifBlank { prettyHost(url) }
+                val sub = buildString {
+                    append(if (blank) "New tab" else prettyHost(url))
+                    if (t === activeTab) append(" · showing")
+                }
+                addView(textBlock(title, sub).apply {
+                    setPadding(dp(12), 0, 0, 0)
+                    (getChildAt(0) as TextView).apply { textSize = 15f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+                    (getChildAt(1) as TextView).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                setOnClickListener {
+                    inSubMenu = false; closeMenu()
+                    if (t !== activeTab) { showTab(t); if (tabHasPage(activeTab)) closeShortcuts() else openShortcuts() }
+                }
+            }
+            row.addView(main, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(TextView(this).apply {
+                text = "✕"; setTextColor(android.graphics.Color.WHITE); textSize = 16f
+                gravity = android.view.Gravity.CENTER
+                setBackgroundResource(R.drawable.row_bg)
+                isClickable = true; isFocusable = true; tag = "tabx:${t.id}"
+                contentDescription = "Close tab"
+                setOnClickListener {
+                    val mode = modeTabs()
+                    val next = mode.getOrNull(mode.indexOf(t) + 1) ?: mode.getOrNull(mode.indexOf(t) - 1)
+                    closeTab(t)
+                    if (menuOpen() && inSubMenu) showTabsMenu(next?.let { n -> "tabx:${n.id}" })
+                }
+            }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { marginStart = dp(4) })
+            list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        trapMenuFocus()
+        (focusTag?.let { menuPanel.findViewWithTag<View>(it) } ?: menuPanel.findViewWithTag("tab:${activeTab.id}") ?: menuPanel.findViewWithTag<View>("tabs:new"))
+            ?.requestFocus()
     }
 
     // ---- Clear browsing data (inside the ⋮ menu) ----
@@ -2784,7 +3209,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun clearData() {
         val what = mutableListOf<String>()
         if (clearHistory) {
-            listOfNotNull(normalWebView, webView).forEach { it.clearHistory() }
+            tabs.forEach { it.webView?.clearHistory(); it.state = null } // a sleeping tab then reloads without its back list
             prefs.recent = emptyList()
             prefs.history = emptyList()
             what += "history"
@@ -2865,6 +3290,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     /** When mkTV last came to the front, and which OK presses started inside it. */
     private var shownAt = 0L
     private val okDown = HashSet<Int>()
+    private var menuHeld = false
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // OK pressed in the launcher to open mkTV (or double-pressed) must not also click the focused
@@ -2880,9 +3306,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (isKeyboardVisible()) return super.dispatchKeyEvent(event)
         val down = event.action == KeyEvent.ACTION_DOWN
         val f = currentFocus
-        // ⋮ menu from anywhere: page, home screen, toolbar or an open panel.
+        // ⋮ menu from anywhere: page, home screen, toolbar or an open panel. Holding Menu opens the tab switcher.
         if (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_BOOKMARK) {
-            if (event.action == KeyEvent.ACTION_UP) toggleMenu()
+            if (down && event.repeatCount == 1 && !menuHeld) { menuHeld = true; showTabsMenu() }
+            if (event.action == KeyEvent.ACTION_UP) { if (menuHeld) menuHeld = false else toggleMenu() }
             return true
         }
         // Remote's search/mic key, where the system passes it to apps: voice search from anywhere.
@@ -3375,11 +3802,17 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             settingsPanel.visibility == View.VISIBLE -> closeSettings()
             historyPanel.visibility == View.VISIBLE -> closeHistory()
             shieldPanel.visibility == View.VISIBLE -> closeShieldPanel()
-            shortcutsPanel.visibility == View.VISIBLE && editingShortcuts -> { editingShortcuts = false; renderShortcuts() }
+            shortcutsPanel.visibility == View.VISIBLE && editingShortcuts && selectedFav != null -> {
+                val i = selectedFav!!.index; selectedFav = null; renderShortcuts(); favTile(i)?.requestFocus()
+            }
+            shortcutsPanel.visibility == View.VISIBLE && editingShortcuts -> { editingShortcuts = false; renderShortcuts(); findViewById<View>(R.id.shortcutsEdit).requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && editingPopular -> { editingPopular = false; renderShortcuts(); findViewById<View>(R.id.popularEdit).requestFocus() }
+            shortcutsPanel.visibility == View.VISIBLE && openFolder >= 0 -> closeFavFolder()
             shortcutsPanel.visibility == View.VISIBLE && hasPage() -> closeShortcuts()
             isInside(toolbar, currentFocus) -> leaveToPage()
             webView.canGoBack() -> webView.goBack()
+            // First page of a tab (e.g. a pop-up) with other tabs open: close it and return to the previous tab.
+            modeTabs().size > 1 -> { closeTab(activeTab); note("Tab closed") }
             SystemClock.uptimeMillis() - lastBackPress < 2000 -> @Suppress("DEPRECATION") super.onBackPressed()
             else -> { lastBackPress = SystemClock.uptimeMillis(); note("Press Back again to exit") }
         }
@@ -3457,8 +3890,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     override fun onDestroy() {
         remoteServer.stop()
-        privateWebView?.destroy()
-        (normalWebView ?: webView).destroy()
+        tabs.forEach { destroyTab(it) }
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }
         super.onDestroy()
     }
@@ -3469,6 +3901,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         /** OK presses this soon after mkTV comes to the front are the launcher's, not the user's choice. */
         private const val LAUNCH_GUARD_MS = 900L
         private const val PRIVATE_PROFILE = "private"
+        /** Run on a tab as it goes to the background, so its video or music doesn't keep playing unseen. */
+        private const val PAUSE_MEDIA_JS =
+            "try{Array.prototype.forEach.call(document.querySelectorAll('video,audio'),function(m){try{m.pause()}catch(e){}})}catch(e){}"
 
         /** A Smart-TV browser UA: YouTube serves its remote-friendly TV interface to it. */
         private const val TV_UA =
