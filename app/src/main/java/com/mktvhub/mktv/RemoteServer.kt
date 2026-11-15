@@ -67,6 +67,7 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         devices.remove(address)
     }
     private val page by lazy { context.assets.open("remote.html").bufferedReader().use { it.readText() } }
+    private val icon by lazy { context.assets.open("remote-icon.png").use { it.readBytes() } }
 
     val running get() = server?.isClosed == false
 
@@ -151,6 +152,8 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         }
         fun respond(code: Int, type: String, text: String) = respond(code, "$type; charset=utf-8", text.toByteArray(Charsets.UTF_8))
         val ok = "{\"ok\":true}"
+        // The page icon is public: browsers fetch it (home screen, tabs) without the pairing code.
+        if (method == "GET" && path in ICON_PATHS) { respond(200, "image/png", icon); return }
         if (!authed) {
             respond(403, "text/html", "<h2 style='font-family:sans-serif'>Scan the QR code shown on your TV (⋮ → Phone remote).</h2>")
             return
@@ -221,6 +224,7 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         /** TLS 1.0 alert record: fatal (2), handshake_failure (40). */
         private val TLS_ALERT_HANDSHAKE_FAILURE = byteArrayOf(0x15, 0x03, 0x01, 0x00, 0x02, 0x02, 0x28)
         private val TUNNEL_PREFIXES = listOf("tun", "ppp", "wg", "ipsec", "vpn", "rmnet", "ccmni", "dummy")
+        private val ICON_PATHS = setOf("/icon.png", "/favicon.ico", "/apple-touch-icon.png")
         const val PORT = 8765
         private const val TAG = "RemoteServer"
         private const val ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
