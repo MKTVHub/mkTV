@@ -15,7 +15,7 @@ import kotlin.concurrent.thread
 
 /**
  * Tiny LAN-only HTTP server that turns a phone browser into a remote.
- * Every API call must carry the per-session token (from the QR code), so other devices on the
+ * Every API call must carry the pairing token (from the QR code), so other devices on the
  * network can't drive the TV just by guessing the port.
  */
 class RemoteServer(private val context: Context, private val listener: Listener, private val savedToken: () -> String? = { null }, private val saveToken: (String) -> Unit = {}) {

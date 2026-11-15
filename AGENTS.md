@@ -39,7 +39,7 @@ app/src/main/
     Updates.kt            Pure: GitHub release parsing, version comparison
     Prefs.kt              SharedPreferences wrapper: every user setting, favourites, recents, history, counters, update state
     PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page
-    RemoteServer.kt       Phone remote: tiny LAN HTTP server with a per-session token (in progress, see docs/PHONE_REMOTE.md)
+    RemoteServer.kt       Phone remote: tiny LAN HTTP server with a pairing token (see docs/PHONE_REMOTE.md)
   assets/
     page_script.js        Injected into every page: cosmetic ad CSS, click-trap removal, GPC, jump-mode engine (window.__sp), watch-mode video helpers, auto-unmute
     yt_clean.js           Injected on YouTube origins only: JSON ad pruning, ad-slot CSS, ad skip
@@ -137,7 +137,7 @@ Debug builds do not set `FLAG_SECURE`, so screenshots work in private mode too.
    - The only network requests the app makes on its own are the ones documented in [docs/PRIVACY.md](docs/PRIVACY.md). Adding a new one requires updating that file.
    - Private browsing must keep nothing after it closes. Do not write private-mode URLs, titles or icons to `Prefs` or files.
    - No `addJavascriptInterface` bridges that pages can call.
-   - Local servers (phone remote) must require the session token on every API call and stop when the session ends.
+   - Local servers (phone remote) must require the pairing token on every API call and stop while mkTV is in the background.
 4. **Keep features generic.** Detect structure, not domains. Site-specific code needs a comment explaining why a generic approach is not possible.
 5. **Don't break the remote.** Every new view must be focusable and reachable with the D-pad, and Back must always lead somewhere sensible.
 6. **License.** All contributions are Apache-2.0. Copyright holder: MKTVHub. Record new third-party code or data in `NOTICE`.

@@ -11,7 +11,7 @@ Typing on a TV with a D-pad is slow. The phone remote lets any phone on the same
    `http://<tv-ip>:8765/?t=<token>`, plus the address in text for typing by hand.
 3. The phone scans the QR code and opens the remote page.
 4. The remote page offers: D-pad (▲▼◀▶), OK, Back, Home, Menu, play/pause, seek −10 s / +10 s, previous / next, a keyboard box that types text into the focused field on the TV, and "open URL".
-5. The server keeps running after the QR panel closes, so the phone stays connected. It stops whenever mkTV leaves the screen and restarts with the same address and token when mkTV comes back. Restarting the app makes a new token.
+5. Once opened, the phone remote listens whenever mkTV is on screen, including after the app restarts, and stops while mkTV is in the background. The port and pairing code stay the same, so a phone that has the remote page open keeps working.
 
 ## Protocol (*Agreed contract*)
 
@@ -19,7 +19,7 @@ Plain HTTP/1.1 on port 8765. Request and response bodies are JSON (`Content-Type
 
 ### Authentication
 
-Every API call must carry the session token, either as:
+Every API call must carry the pairing token, either as:
 
 - query parameter `?t=<token>`, or
 - header `X-Token: <token>`.
@@ -92,7 +92,7 @@ curl "http://192.168.1.50:8765/api/state?t=$TOKEN"
 
 - **Token on every call.** Random per session; required on all API endpoints and the page. Without it the server does nothing.
 - **LAN only.** The server is for the local network; it is not exposed through any relay or cloud service and never contacts the internet.
-- **Session-scoped.** The server only runs while Phone remote is active. A new session gets a new token.
+- **Foreground-only.** The server runs only while mkTV is on screen (after the user first opens Phone remote). The pairing token is random, 10 characters, stored in app-private preferences and kept across restarts.
 
 ### Recommended hardening
 
@@ -123,7 +123,7 @@ As of 2026-11-15 (tested on an Android TV). Compared with this spec, `RemoteServ
 - **Matches:** endpoints and JSON shapes; token via `?t=` or `X-Token` on every request including `GET /` (wrong token: `403` with a short "scan the QR code" page); `home` opens the mkTV home screen (or the home page address); keys are injected through `BrowserActivity.dispatchKeyEvent`, and a held phone button auto-repeats after 450 ms like a real remote; `/api/open` goes through `normalizeInput()` and `load()`; the page is self-contained; responses send `Cache-Control: no-store`; request bodies are capped at 64 KB.
 - **Port:** tries 8765, then 8766 to 8769 if the port is taken. The QR code always shows the port actually used.
 - **Token:** 10 characters from a 31-character alphabet (about 49 bits) from `SecureRandom`, compared in constant time (`MessageDigest.isEqual`). Recommended: raise to at least 128 bits.
-- **Session lifetime:** one token per `BrowserActivity` instance. The server stops in `onStop` and restarts in `onStart` on the same port (`reuseAddress`), so the QR code stays valid while the app is open. It stops for good in `onDestroy`. There is no "disconnect phone" button yet.
+- **Lifetime:** `Prefs.remoteEnabled` turns on the first time Phone remote opens; from then on `onStart` starts the server (retrying for a few seconds while the old socket closes) and `onStop` stops it. The token lives in `Prefs.remoteToken`. The address skips VPN tunnel interfaces. There is no "unpair phones" button yet (Clear app data resets it).
 - **Network scope:** the server listens on all interfaces, with no source-address or `Host` header check, and does not require `Content-Type: application/json`.
 - No rate limiting, no `text` length cap, no URL scheme check in `/api/open` beyond the address-bar normalisation.
 - Responses carry no CORS headers (good: other origins cannot read responses).
