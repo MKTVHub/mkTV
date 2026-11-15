@@ -372,6 +372,50 @@
     return 'ok';
   }
 
+  // ---- playback controls: speed, pause for the sleep timer, "end of video" ----
+
+  // Every <video>/<audio> here and in same-origin iframes (cross-origin players aren't reachable).
+  function eachMedia(fn) {
+    var docs = [document], fr = document.getElementsByTagName('iframe');
+    for (var i = 0; i < fr.length; i++) { try { if (fr[i].contentDocument) docs.push(fr[i].contentDocument); } catch (e) {} }
+    for (var d = 0; d < docs.length; d++) {
+      var ms = docs[d].querySelectorAll('video, audio');
+      for (var j = 0; j < ms.length; j++) { try { fn(ms[j]); } catch (e) {} }
+    }
+  }
+
+  var wantRate = 1, hooked = false, endArmed = false, endFired = false, holdUntil = 0;
+  function setRate(m) { m.__spRateSrc = m.currentSrc; if (m.playbackRate !== wantRate) m.playbackRate = wantRate; }
+  function stopAll(holdMs) {
+    holdUntil = Date.now() + holdMs;
+    eachMedia(function (m) { if (!m.paused) m.pause(); });
+  }
+  // Media events don't bubble: listen in the capture phase. Installed on first use only.
+  function hook() {
+    if (hooked) return;
+    hooked = true;
+    document.addEventListener('playing', function (e) {
+      var m = e.target;
+      if (!m || m.playbackRate === undefined) return;
+      // The sleep timer just paused everything: keep a site's autoplay from starting the next item.
+      if (Date.now() < holdUntil) { m.pause(); return; }
+      // Once per source, so a speed picked in the site's own menu is kept for that video.
+      if (m.__spRateSrc !== m.currentSrc) setRate(m);
+    }, true);
+    // "End of video": pause just before the end, so the site's 'ended' autoplay never runs.
+    document.addEventListener('timeupdate', function (e) {
+      var m = e.target;
+      if (!endArmed || !m || m.tagName !== 'VIDEO' || !isFinite(m.duration) || m.duration <= 0) return;
+      if (m.duration - m.currentTime > 0.4 + 0.3 * (m.playbackRate || 1) || m !== mainVideo()) return;
+      endArmed = false; endFired = true; stopAll(10000);
+    }, true);
+    // Fallback when timeupdate came too late (very short tail, tab in background).
+    document.addEventListener('ended', function (e) {
+      if (!endArmed || !e.target || e.target.tagName !== 'VIDEO') return;
+      endArmed = false; endFired = true; stopAll(10000);
+    }, true);
+  }
+
   window.__sp = {
     move: move,
     rect: report,
@@ -385,6 +429,7 @@
     },
     toggle: function () {
       var v = anyMedia(), pressed = pressPlay(v);
+      holdUntil = 0; // the user pressed play: the sleep timer's hold no longer applies
       if (pressed) return pressed;
       if (!v) return null;
       if (v.paused) v.play(); else v.pause();
@@ -408,7 +453,7 @@
         cc++; if (tr[i].mode === 'showing') on = true;
       }
       return JSON.stringify({ has: true, playing: !v.paused && !v.ended, t: v.currentTime || 0,
-        d: isFinite(v.duration) ? v.duration : 0, cc: cc > 0, ccOn: on,
+        d: isFinite(v.duration) ? v.duration : 0, cc: cc > 0, ccOn: on, speed: v.playbackRate || 1,
         fs: !!document.fullscreenElement || !!(window.__sp.filling && __sp.filling()) });
     },
     seekTo: function (t) {
@@ -427,6 +472,26 @@
       }
       if (!on && first) first.mode = 'showing';
       return first ? (on ? 'off' : 'on') : null;
+    },
+    // Wanted speed for this document: applied now and to each later video when it starts playing.
+    rate: function (r) {
+      r = +r; if (!(r > 0 && r <= 4)) return null;
+      hook(); wantRate = r;
+      eachMedia(setRate);
+      return String(r);
+    },
+    // Sleep timer: pause every video and audio, and hold off autoplay for a moment.
+    pause: function () { hook(); stopAll(3000); return 'ok'; },
+    // Sleep timer "End of video". on: arms it (again after a navigation) and reports
+    // {fired} once it paused, else {left: wall-clock seconds to the end, -1 if unknown or live}.
+    sleepEnd: function (on) {
+      hook();
+      if (!on) { endArmed = false; endFired = false; return JSON.stringify({ fired: false }); }
+      if (endFired) { endFired = false; return JSON.stringify({ fired: true }); }
+      endArmed = true;
+      var v = mainVideo(), left = -1;
+      if (v && isFinite(v.duration) && v.duration > 0 && !v.paused) left = (v.duration - v.currentTime) / (v.playbackRate || 1);
+      return JSON.stringify({ fired: false, left: left });
     },
     // Real full screen via the Fullscreen API. Needs a recent user activation, which the app
     // provides by sending a harmless key to the page just before calling this.

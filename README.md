@@ -20,7 +20,7 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **Downloads.** Download files from sites after a quick confirm, follow progress in ⋮ → Downloads, then open them: APKs go to Android's installer, videos play in mkTV. No storage permission needed.
 - **Updates in the app.** When a new release is out, the home screen offers it. One press downloads it from GitHub and opens Android's installer.
 - **YouTube on the TV interface.** The YouTube tile opens YouTube's own TV interface, with the remote passed straight through.
-- **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for full screen. Where a site's player can't go full screen, mkTV fills the screen with the video itself. Videos start with sound.
+- **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for full screen, ▲ for speed (remembered per site) and a sleep timer. Where a site's player can't go full screen, mkTV fills the screen with the video itself. Videos start with sound.
 - **Page zoom.** Make any site bigger or smaller from ⋮ → Zoom; remembered per site, with a default in Settings.
 - **Native player.** If a page plays an HLS or DASH stream, **Watch full screen** opens it in a native player that is smoother on TV hardware.
 - **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list; turn on OISD, HaGeZi, Peter Lowe's or StevenBlack variants, add any hosts or domain list by address, and allowlist domains that must never be blocked), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway**. Pause blocking for one site from the shield.
@@ -47,8 +47,9 @@ Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 | Watch mode | ◀ ▶ | Seek 10 s |
 | | OK | Pause / play |
 | | ▲ ▼ | Previous / next (vertical feeds) |
-| | ▼ / ▲ | Full screen / leave full screen (normal video) |
-| | Back | Browse the page again |
+| | ▼ | Full screen (normal video) |
+| | ▲ (normal video) / hold OK | Playback controls: ±10 s, speed, sleep timer |
+| | Back | Leave full screen, then browse the page again |
 | YouTube TV | All keys | Go to YouTube; **hold Back** for the mkTV home screen |
 | Address bar | ▼ | Move into the suggestions (press Back first to close the on-screen keyboard) |
 | Anywhere | Search (if the remote has it) | Voice search |

@@ -76,6 +76,12 @@
   .np-row { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-top:8px; }
   .np-row button { height:46px; border-radius:12px; border:0; background:var(--key); color:var(--text); font-size:16px; font-weight:700; }
   .np-row button.on { background:linear-gradient(135deg,var(--accent1),var(--accent2)); }
+  .np-row button { display:flex; align-items:center; justify-content:center; gap:6px; }
+  .np-row button span { min-width:0; overflow:hidden; text-overflow:ellipsis; font-variant-numeric:tabular-nums; }
+  .np-row.np-chips { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .np-row.np-menu button { flex-direction:column; gap:2px; height:52px; font-size:12px; font-weight:600; }
+  .np-row.np-menu .ic { width:20px; height:20px; }
+  .np-row button:disabled { opacity:.35; }
 
   .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(66px,100%),1fr)); gap:8px; margin-bottom:10px; }
   .tile { border:0; background:var(--key); border-radius:14px; padding:10px 4px 8px; color:var(--text); display:flex; flex-direction:column;
@@ -164,6 +170,17 @@
       <button data-key="ff" aria-label="Forward 10 seconds">+10</button>
       <button id="npFull" aria-label="Full screen"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7,14H5v5h5v-2H7v-3zM5,10h2V7h3V5H5v5zM17,17h-3v2h5v-5h-2v3zM14,5v2h3v3h2V5h-5z"/></svg></button>
       <button id="npCc" aria-label="Captions">CC</button>
+    </div>
+    <div class="np-row np-chips">
+      <button id="npSpeed" aria-label="Playback speed: tap for the next speed"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.38,8.57l-1.23,1.85a8,8 0,0 1,-0.22 7.58H5.07A8,8 0,0 1,15.58 6.85l1.85,-1.23A10,10 0,0 0,3.35 19a2,2 0,0 0,1.72 1h13.85a2,2 0,0 0,1.74 -1a10,10 0,0 0,-0.27 -10.44zM10.59,15.41a2,2 0,0 0,2.83 0l5.66,-8.49 -8.49,5.66a2,2 0,0 0,0 2.83z"/></svg><span id="npSpeedT">1×</span></button>
+      <button id="npSleep" aria-label="Sleep timer" aria-expanded="false"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12.34,2.02C6.59,1.82 2,6.42 2,12c0,5.52 4.48,10 10,10c3.71,0 6.93,-2.02 8.66,-5.02C13.15,16.73 8.57,8.55 12.34,2.02z"/></svg><span id="npSleepT">Sleep</span></button>
+    </div>
+    <div class="np-row np-menu" id="npSleepMenu" hidden>
+      <button data-sleep="0" aria-label="Sleep timer off"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"/></svg><span>Off</span></button>
+      <button data-sleep="15" aria-label="Sleep in 15 minutes"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15,1H9v2h6V1zM11,14h2V8h-2v6zM19.03,7.39l1.42,-1.42c-0.43,-0.51 -0.9,-0.99 -1.41,-1.41l-1.42,1.42C16.07,4.74 14.12,4 12,4c-4.97,0 -9,4.03 -9,9s4.02,9 9,9 9,-4.03 9,-9c0,-2.12 -0.74,-4.07 -1.97,-5.61zM12,20c-3.87,0 -7,-3.13 -7,-7s3.13,-7 7,-7 7,3.13 7,7 -3.13,7 -7,7z"/></svg><span>15m</span></button>
+      <button data-sleep="30" aria-label="Sleep in 30 minutes"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15,1H9v2h6V1zM11,14h2V8h-2v6zM19.03,7.39l1.42,-1.42c-0.43,-0.51 -0.9,-0.99 -1.41,-1.41l-1.42,1.42C16.07,4.74 14.12,4 12,4c-4.97,0 -9,4.03 -9,9s4.02,9 9,9 9,-4.03 9,-9c0,-2.12 -0.74,-4.07 -1.97,-5.61zM12,20c-3.87,0 -7,-3.13 -7,-7s3.13,-7 7,-7 7,3.13 7,7 -3.13,7 -7,7z"/></svg><span>30m</span></button>
+      <button data-sleep="60" aria-label="Sleep in 60 minutes"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15,1H9v2h6V1zM11,14h2V8h-2v6zM19.03,7.39l1.42,-1.42c-0.43,-0.51 -0.9,-0.99 -1.41,-1.41l-1.42,1.42C16.07,4.74 14.12,4 12,4c-4.97,0 -9,4.03 -9,9s4.02,9 9,9 9,-4.03 9,-9c0,-2.12 -0.74,-4.07 -1.97,-5.61zM12,20c-3.87,0 -7,-3.13 -7,-7s3.13,-7 7,-7 7,3.13 7,7 -3.13,7 -7,7z"/></svg><span>60m</span></button>
+      <button data-sleep="-1" aria-label="Pause at the end of this video"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z"/></svg><span>End</span></button>
     </div>
   </div>
 
@@ -390,8 +407,50 @@
     $('npCc').hidden = !m.cc; $('npCc').className = m.ccOn ? 'on' : '';
     $('npFull').className = m.fs ? 'on' : '';
     if (m.d > 0) { $('npBar').max = Math.floor(m.d); $('npD').textContent = fmt(m.d); }
+    renderSpeed();
+    // Live streams never end: "End" is only offered for videos with a duration (as on the TV).
+    $('npSleepMenu').querySelector('[data-sleep="-1"]').disabled = !(m.d > 0) && sleep.mode !== -1;
     tick();
   }
+  // ---- Speed chip (cycles) and sleep timer chip (small menu); allowlists match RemoteInput on the TV ----
+  var SPEEDS = [0.75, 1, 1.25, 1.5, 2], sleep = { mode: 0, left: 0 }, sleepAt = 0;
+  function snapSpeed(s) {
+    var best = 1;
+    SPEEDS.forEach(function (v) { if (Math.abs(v - (s || 1)) < Math.abs(best - (s || 1))) best = v; });
+    return best;
+  }
+  function renderSpeed() {
+    var s = snapSpeed(media && media.speed);
+    $('npSpeedT').textContent = s + '×';
+    $('npSpeed').className = s !== 1 ? 'on' : '';
+  }
+  $('npSpeed').onclick = function () {
+    if (!media) return;
+    buzz();
+    var next = SPEEDS[(SPEEDS.indexOf(snapSpeed(media.speed)) + 1) % SPEEDS.length];
+    media.speed = next; renderSpeed();
+    api('/api/media', { action: 'speed', value: next });
+  };
+  function renderSleep(s) {
+    if (s) { sleep = s; sleepAt = Date.now(); }
+    var left = Math.max(0, sleep.left - (Date.now() - sleepAt) / 1000), label = 'Sleep';
+    if (sleep.mode === -1) label = 'End';
+    else if (sleep.mode > 0) label = left >= 60 ? Math.ceil(left / 60) + ' min' : fmt(left);
+    $('npSleepT').textContent = label;
+    $('npSleep').className = sleep.mode ? 'on' : '';
+    var opts = $('npSleepMenu').querySelectorAll('button');
+    for (var i = 0; i < opts.length; i++) opts[i].className = +opts[i].getAttribute('data-sleep') === sleep.mode ? 'on' : '';
+  }
+  setInterval(function () { if (sleep.mode > 0) renderSleep(); }, 1000);
+  function showSleepMenu(open) { $('npSleepMenu').hidden = !open; $('npSleep').setAttribute('aria-expanded', open ? 'true' : 'false'); }
+  $('npSleep').onclick = function () { buzz(); showSleepMenu($('npSleepMenu').hidden); };
+  $('npSleepMenu').addEventListener('click', function (e) {
+    var b = e.target.closest('button'); if (!b) return;
+    var m = +b.getAttribute('data-sleep');
+    buzz(); showSleepMenu(false);
+    renderSleep({ mode: m, left: m > 0 ? m * 60 : 0 });
+    api('/api/media', { action: 'sleep', value: m });
+  });
   function tick() {
     if (!media || !(media.d > 0) || dragging) return;
     var t = Math.min(media.d, media.t + (media.playing ? (Date.now() - mediaAt) / 1000 : 0));
@@ -432,6 +491,7 @@
       $('now').textContent = s.title || '';
       if (pointer !== !!s.pointer) { pointer = !!s.pointer; $('touch').hint(); }
       renderMedia(s.media || null, s.title);
+      if (s.sleep) renderSleep(s.sleep);
     }).catch(function () { setOnline(false); }).then(function () {
       if (gen === pollGen) pollTimer = setTimeout(poll, media ? 1000 : 2500);
     });

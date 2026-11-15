@@ -18,9 +18,9 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 **What.** The D-pad moves a mouse pointer that speeds up while held. Push against a screen edge to scroll. OK clicks at the pointer. The pointer fades after 6 seconds of inactivity. Moving it to the top edge shows the toolbar.
 
-**How.** `CursorView` runs a `Choreographer` frame loop while a direction is held, ramping speed from 260 to 1,300 dp/s over 0.9 s. At an edge it calls `onEdgeScroll`, which sends a mouse wheel event at the pointer.
+**How.** `CursorView` runs a `Choreographer` frame loop while a direction is held. With **Pointer acceleration** on (default) speed ramps from 260 to 1,300 dp/s over 0.9 s; off, it moves at a steady 600 dp/s. **Pointer speed** (Slow / Normal / Fast) scales that by 0.6× / 1× / 1.6×, and also scales phone touchpad moves (1.8 dp per phone px at Normal). Both are in Settings → Navigation, apply at once and are saved in `Prefs` (`pointerSpeed`, `pointerAccel`). The math is in `PointerMotion` (unit-tested). At an edge it calls `onEdgeScroll`, which sends a mouse wheel event at the pointer.
 
-**Where.** `CursorView.kt`, `BrowserActivity.scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation or Settings → Navigation (`Prefs.navMode`).
+**Where.** `CursorView.kt`, `PointerMotion.kt`, `BrowserActivity.applyPointerTuning`, `scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation or Settings → Navigation (`Prefs.navMode`).
 
 **Limits.** Slower than jump mode for long pages. Hover-only menus get a touch, not a hover.
 
@@ -130,17 +130,32 @@ With the on-screen keyboard open, Back closes the keyboard and ▼ then moves in
 
 **What.** Turns on by itself when a large video (over a quarter of the screen) is playing. The remote then controls the video:
 - Vertical feeds (portrait video, for example short-video feeds): ▲ previous, ▼ next.
-- Normal video: ▼ full screen, ▲ leave full screen or leave watch mode.
-- ◀ ▶ seek 10 s, OK pause/play, Back browse the page again.
+- Normal video: ▼ full screen, ▲ playback controls.
+- ◀ ▶ seek 10 s, OK pause/play, hold OK playback controls, Back leave full screen, then browse the page again.
 - A key-hint dock slides up for 2.5 s after each press, and a large symbol flashes for feedback.
 
 Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or not. After Back, watch mode does not re-enter on the same URL.
 
-**How.** `checkWatch` asks `__sp.media()` about every second for the largest visible `<video>`. "Next" scrolls the video's scroll container by one screen (snap-scrolling feeds land on exactly one item), falling back to synthetic arrow-key events. Full screen calls the Fullscreen API on the player container, after sending a harmless key to the page to provide the user activation the API needs. If the API is missing or throws, the video is in a same-origin iframe, or no full-screen view appears within 0.9 s, mkTV uses **fill mode** instead: `__sp.fill()` pins the largest visible (preferably playing) `<video>`, or the same-origin iframe that holds it, over the whole viewport with injected CSS (`position:fixed`, full size, `object-fit:contain`, top z-index; ancestors lose transforms and filters that would trap it; everything else is hidden), and the top bar slides away. OK and Play/Pause toggle, ◀ ▶ seek, ▲ or Back put the page back as it was (marks and styles removed, scroll position restored). If a single-page site swaps the `<video>` element, fill follows the new one; after about 5 s with no video it gives up. Watch mode exits after about 3 s with no big video.
+**How.** `checkWatch` asks `__sp.media()` about every second for the largest visible `<video>`. "Next" scrolls the video's scroll container by one screen (snap-scrolling feeds land on exactly one item), falling back to synthetic arrow-key events. Full screen calls the Fullscreen API on the player container, after sending a harmless key to the page to provide the user activation the API needs. If the API is missing or throws, the video is in a same-origin iframe, or no full-screen view appears within 0.9 s, mkTV uses **fill mode** instead: `__sp.fill()` pins the largest visible (preferably playing) `<video>`, or the same-origin iframe that holds it, over the whole viewport with injected CSS (`position:fixed`, full size, `object-fit:contain`, top z-index; ancestors lose transforms and filters that would trap it; everything else is hidden), and the top bar slides away. OK and Play/Pause toggle, ◀ ▶ seek, ▲ opens the playback controls, Back puts the page back as it was (marks and styles removed, scroll position restored). If a single-page site swaps the `<video>` element, fill follows the new one; after about 5 s with no video it gives up. Watch mode exits after about 3 s with no big video.
 
 **Where.** `// ---- Watch mode ----` (`checkWatch`, `enterWatch`, `exitWatch`, `handleWatchKey`, `handleMediaKey`, `toggleTheater`, `showDock`, `flash`), `// region Zoom and full-screen fill` (`afterFullscreenRequest`, `enterFill`, `exitFill`, `syncFill`), `PageZoom.kt`, `page_script.js` (`mainVideo`, `feed`, `fullscreen`, `fill`, `unfill`).
 
 **Limits.** Videos inside cross-origin iframes (most embedded players) and inside shadow DOM are invisible to the script, so watch mode, fill and media keys don't reach them. Use the player's own controls or "Watch full screen" if a stream was detected. Fill hides the site's own controls and any captions drawn as page elements (captions from `<track>` still show).
+
+## Playback controls and sleep timer
+
+**What.** In watch mode, ▲ (normal video) or holding OK (any video, including vertical feeds) opens a small panel over the video, also in full screen:
+- **−10 s · Pause/Play · +10 s.**
+- **Speed:** 0.75×, 1×, 1.25×, 1.5×, 2×. Remembered per site (host, `www.` ignored) and applied to every video on that site as it starts, including the native player. Private browsing keeps speeds in memory only.
+- **Sleep timer:** Off, 15, 30, 60 min, End of video. The heading shows the time left. When it fires, every video and audio in the open tabs pauses (and the native player, if it is on screen), the notice "Sleep timer: paused" appears with a Play button, and the screen is allowed to turn off until the next key press. mkTV stays open. **End of video** pauses the current video about half a second before it ends, so the site's autoplay of the next video never starts; it is offered only for videos with a duration (not live streams).
+
+Every button has an icon; the current speed and timer are highlighted. Changes apply at once; Back (or Menu) closes the panel. The D-pad stays inside it. The phone remote's Now playing card has the same speed and sleep controls.
+
+**How.** The panel is built in code (`renderControls`) and counts as an overlay (`overlayOpen`), but does not bring the toolbar back. Speed: `__sp.rate(r)` sets the wanted speed for the document; a capture-phase `playing` listener applies it once per media source (so a speed picked in the site's own menu stays for that video). The site's speed is sent on page load (`applySpeed`, next to `applyZoom`) and when watch mode starts. Timed sleep is a single `Handler.postDelayed` (no polling; the panel's countdown updates once a second only while it is open). End of video: `__sp.sleepEnd(true)` arms a capture-phase `timeupdate` check in the page; the app re-arms it and learns that it fired with checks spaced by the video's remaining time (2 to 30 s apart). After pausing, the page holds off autoplay for a few seconds; Play from mkTV ends the hold.
+
+**Where.** `// ---- Playback controls` in `BrowserActivity` (`openControls`, `renderControls`, `setSpeed`, `applySpeed`, `setSleep`, `checkSleepEnd`, `sleepNow`), `PlaybackSpeed.kt` (levels, labels, per-site storage, sleep choices; unit-tested), `Prefs.siteSpeed`, `page_script.js` (`rate`, `pause`, `sleepEnd`), `PlayerActivity` (`EXTRA_SPEED`, `pauseForSleep`, `sleepAtEnd`).
+
+**Limits.** Players in cross-origin iframes and sites that reset `playbackRate` themselves may ignore the speed. A speed picked in the native player's own ⚙ menu is not saved. End of video in the native player pauses at the stream's end (a single stream has nothing to autoplay). If a site starts its next video by other means than `ended` (for example a timer in the last seconds), End of video may pause the next one instead. The timer stops if mkTV is closed.
 
 ## Page zoom
 
@@ -164,7 +179,7 @@ Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or n
 
 **How.** `shouldInterceptRequest` records manifest URLs with the Referer and Origin the page sent, skipping variant playlists under an already-seen master. The player receives those headers plus the WebView user agent and the cookies for that URL.
 
-**Where.** `HostRules.isStreamUrl`, `isVariantOf`, `DetectedStream`, `updateStreamButton`, `openStreamPicker`, `playNative`, `PlayerActivity.kt`.
+**Where.** `HostRules.isStreamUrl`, `isVariantOf`, `DetectedStream`, `updateStreamButton`, `openStreamPicker`, `playNative`, `PlayerActivity.kt`. The player starts at the site's saved speed (see Playback controls); its ⚙ menu also has a speed setting.
 
 **Limits.** DRM-protected streams will not play. Streams that need tokens generated by page scripts per segment may fail. Detection is by URL extension only; manifests without `.m3u8`/`.mpd` in the URL are missed.
 
@@ -270,7 +285,7 @@ Sections, in sidebar order (`SETTINGS_TABS`, `renderSettings`):
 
 | Section | Settings |
 |---|---|
-| Navigation | Jump between items / Mouse pointer |
+| Navigation | Jump between items / Mouse pointer; Pointer speed (Slow / Normal / Fast); Pointer acceleration |
 | Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`), Show Popular / Favourites / Recently visited, Home screen layout (current order; Reset) |
 | Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
@@ -292,7 +307,7 @@ Settings save as you change them. Closing Settings reloads the page if anything 
 
 ## Phone remote
 
-**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing seek bar while a video plays, and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing card while a video plays (seek bar, ±10 s, play/pause, full screen, captions, a speed chip that cycles 0.75× to 2×, and a sleep timer chip with Off / 15 / 30 / 60 min / End), and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
 
 **Panel.** Two tabs: **Connect** (QR code, steps, address, Help, New code, Share Wi-Fi) and **Devices (n)**, which lists each phone or computer using the remote with the current code (address and last activity) with a **Disconnect** button. Disconnect refuses that address until the next New code (everyone shares one code, so the address is what can be shut out).
 

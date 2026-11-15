@@ -107,6 +107,13 @@ class Prefs(context: Context) {
     var navMode: String
         get() = p.getString("nav_mode", "jump")!!
         set(v) = p.edit().putString("nav_mode", v).apply()
+    /** Pointer mode: [PointerMotion] level (Slow / Normal / Fast) and whether a held direction speeds up. */
+    var pointerSpeed: Int
+        get() = PointerMotion.level(p.getInt("pointer_speed", PointerMotion.NORMAL))
+        set(v) = p.edit().putInt("pointer_speed", PointerMotion.level(v)).apply()
+    var pointerAccel: Boolean
+        get() = p.getBoolean("pointer_accel", true)
+        set(v) = p.edit().putBoolean("pointer_accel", v).apply()
 
     /** Sites (registrable domains) where all blocking is paused. */
     var pausedSites: Set<String>
@@ -205,6 +212,11 @@ class Prefs(context: Context) {
     var siteZoom: Map<String, Int>
         get() = PageZoom.parse(p.getStringSet("site_zoom", emptySet())!!)
         set(v) = p.edit().putStringSet("site_zoom", PageZoom.serialize(v)).apply()
+
+    /** Per-host video speed (see PlaybackSpeed; normal mode only, private browsing keeps its speeds in memory). */
+    var siteSpeed: Map<String, Double>
+        get() = PlaybackSpeed.parse(p.getStringSet("site_speed", emptySet())!!)
+        set(v) = p.edit().putStringSet("site_speed", PlaybackSpeed.serialize(v)).apply()
 
     companion object {
         val HOME_SECTIONS = listOf("pop", "fav", "rec")
