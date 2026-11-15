@@ -113,7 +113,7 @@
   function candidates() {
     var key = domVersion + '|' + scrollBucket() + '|' + innerWidth;
     if (cache && key === cacheKey) return cache;
-    var vh = innerHeight, vw = innerWidth, set = new Set(), list = [];
+    var vh = innerHeight, vw = innerWidth, set = new Set(), list = [], real = new Set();
     function add(el, r) {
       if (set.has(el)) return;
       r = rectOf(el);
@@ -125,7 +125,7 @@
       set.add(el); list.push(el);
     }
     var q = document.querySelectorAll(SEL);
-    for (var i = 0; i < q.length; i++) add(q[i]);
+    for (var i = 0; i < q.length; i++) { add(q[i]); if (set.has(q[i])) real.add(q[i]); }
     // Framework buttons often have no attributes, only cursor:pointer. Bounded scan near the viewport.
     if (document.body) {
       var all = document.body.getElementsByTagName('*'), checked = 0;
@@ -138,11 +138,18 @@
         if (getComputedStyle(el).cursor === 'pointer') add(el, r);
       }
     }
-    // Keep the outermost interactive element (a link's inner spans inherit cursor:pointer).
+    // Keep the outermost interactive element (a link's inner spans inherit cursor:pointer), except when
+    // the outer one is only a cursor:pointer wrapper around real controls (YouTube Music's whole player
+    // bar is clickable): then its buttons are the targets and the wrapper is dropped.
+    var wrappers = new Set();
     cache = list.filter(function (el) {
-      for (var p = el.parentElement, d = 0; p && d < 8; p = p.parentElement, d++) if (set.has(p)) return false;
+      for (var p = el.parentElement, d = 0; p && d < 8; p = p.parentElement, d++) {
+        if (!set.has(p)) continue;
+        if (real.has(el) && !real.has(p)) { wrappers.add(p); continue; }
+        return false;
+      }
       return true;
-    });
+    }).filter(function (el) { return !wrappers.has(el); });
     cacheKey = key;
     return cache;
   }
@@ -290,6 +297,55 @@
     return ba > 0.25 * innerWidth * innerHeight ? best : null;
   }
 
+  // What the media keys control: the big video, else any audio/video that is playing (or loaded).
+  // Music sites (YouTube Music, Spotify) play through a hidden or tiny player behind the artwork.
+  function anyMedia() {
+    var v = mainVideo(); if (v) return v;
+    var ms = document.querySelectorAll('video,audio'), loaded = null;
+    for (var i = 0; i < ms.length; i++) {
+      var m = ms[i];
+      // preload="none" players (Wikipedia) have no currentSrc until played, only <source> children.
+      var unloaded = !m.currentSrc && !m.src;
+      if (unloaded && !m.querySelector('source[src]')) continue;
+      if (!m.paused && !m.ended) return m;
+      if (!loaded && (m.readyState > 0 || unloaded)) loaded = m;
+    }
+    return loaded;
+  }
+
+  // The page's own Next / Previous button (player bars label them for screen readers).
+  function pressSkip(step) {
+    var re = step > 0 ? /^(next|skip|next (song|track|video|episode))\b/i : /^(previous|prev)\b/i;
+    var bs = document.querySelectorAll('button[aria-label],[role=button][aria-label],[aria-label][tabindex],button[title]');
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i], label = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+      if (!re.test(label)) continue;
+      var r = b.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4 || b.disabled || b.getAttribute('aria-disabled') === 'true') continue;
+      b.click();
+      return 'ok';
+    }
+    return null;
+  }
+
+  // The page's own Play/Pause button. Keeps site players (YouTube Music, Spotify, SoundCloud) in step:
+  // pausing their media element behind their back can make them restart the track.
+  // Exact labels only, so thumbnail buttons like "Play <song>" never match.
+  function pressPlay(m) {
+    var want = m && !m.paused ? /^pause\b/i : /^play\b/i;
+    var re = /^(play|pause)(\s*\(k\)|\s*\(space\)|\s+keyboard shortcut \w+)?$/i;
+    var bs = document.querySelectorAll('button[aria-label],[role=button][aria-label],button[title],[role=button][title]');
+    for (var i = 0; i < bs.length; i++) {
+      var b = bs[i], label = (b.getAttribute('aria-label') || b.getAttribute('title') || '').trim();
+      if (!re.test(label) || !want.test(label)) continue;
+      var r = b.getBoundingClientRect();
+      if (r.width < 4 || r.height < 4 || b.disabled || b.getAttribute('aria-disabled') === 'true') continue;
+      b.click();
+      return /^pause/i.test(label) ? 'paused' : 'playing';
+    }
+    return null;
+  }
+
   function scroller(el) {
     for (var p = el && el.parentElement; p && p !== document.body; p = p.parentElement) {
       var oy = getComputedStyle(p).overflowY;
@@ -328,19 +384,23 @@
         fill: !!(window.__sp.filling && __sp.filling()) });
     },
     toggle: function () {
-      var v = mainVideo(); if (!v) return null;
+      var v = anyMedia(), pressed = pressPlay(v);
+      if (pressed) return pressed;
+      if (!v) return null;
       if (v.paused) v.play(); else v.pause();
       return v.paused ? 'paused' : 'playing';
     },
     seek: function (s) {
-      var v = mainVideo(); if (!v) return null;
+      var v = anyMedia(); if (!v) return null;
       v.currentTime = Math.max(0, v.currentTime + s);
       return String(Math.round(v.currentTime));
     },
     feed: feed,
+    // Media Next/Previous: a feed (Shorts) scrolls; otherwise press the page's Next/Previous button.
+    skip: function (step) { return mainVideo() ? feed(step) : (pressSkip(step) || feed(step)); },
     // Phone remote "Now playing": position, duration (0 for live streams) and caption tracks.
     status: function () {
-      var v = mainVideo();
+      var v = anyMedia();
       if (!v) return JSON.stringify({ has: false });
       var tr = v.textTracks || [], cc = 0, on = false;
       for (var i = 0; i < tr.length; i++) {
@@ -352,7 +412,7 @@
         fs: !!document.fullscreenElement || !!(window.__sp.filling && __sp.filling()) });
     },
     seekTo: function (t) {
-      var v = mainVideo(); if (!v || !isFinite(v.duration)) return null;
+      var v = anyMedia(); if (!v || !isFinite(v.duration)) return null;
       v.currentTime = Math.max(0, Math.min(t, v.duration));
       return String(Math.round(v.currentTime));
     },

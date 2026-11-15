@@ -4016,7 +4016,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { if (down) { webView.evaluateJavascript("window.__sp && __sp.seek(10)", null); flash("10 ⟳") }; return true }
             KeyEvent.KEYCODE_MEDIA_REWIND -> { if (down) { webView.evaluateJavascript("window.__sp && __sp.seek(-10)", null); flash("⟲ 10") }; return true }
             KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
-                if (down) webView.evaluateJavascript("window.__sp && __sp.feed(${if (e.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) 1 else -1})", null)
+                if (down) webView.evaluateJavascript("window.__sp && __sp.skip(${if (e.keyCode == KeyEvent.KEYCODE_MEDIA_NEXT) 1 else -1})", null)
                 return true
             }
         }
@@ -4028,6 +4028,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             when (res?.trim('"')) {
                 "paused" -> flash("❚❚")
                 "playing" -> flash("▶")
+                // No media mkTV can reach (e.g. a player in a cross-origin iframe): let the page have the key.
+                else -> for (a in intArrayOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP))
+                    webView.dispatchKeyEvent(KeyEvent(a, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE))
             }
         }
         if (watching) showDock()
