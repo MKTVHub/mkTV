@@ -63,6 +63,8 @@
                  padding:0 12px; font-size:16px; user-select:text; -webkit-user-select:text; }
   .field button { flex:none; height:46px; padding:0 14px; border-radius:12px; border:0; color:white; font-weight:700; font-size:15px;
                   background:linear-gradient(135deg,var(--accent1),var(--accent2)); white-space:nowrap; }
+  .field button { display:flex; align-items:center; justify-content:center; gap:6px; }
+  .field button .ic { width:24px; height:24px; }
   .field button.plain { background:var(--key); color:var(--muted); padding:0 12px; }
   .sub { color:var(--muted); font-size:12px; margin:8px 2px 0; }
 
@@ -156,9 +158,9 @@
     </div>
     <div class="np-row">
       <button data-key="rew" aria-label="Back 10 seconds">−10</button>
-      <button data-key="playpause" id="npPlay" aria-label="Play or pause">▶</button>
+      <button data-key="playpause" id="npPlay" aria-label="Play or pause"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8,5v14l11,-7z"/></svg></button>
       <button data-key="ff" aria-label="Forward 10 seconds">+10</button>
-      <button id="npFull" aria-label="Full screen">⛶</button>
+      <button id="npFull" aria-label="Full screen"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7,14H5v5h5v-2H7v-3zM5,10h2V7h3V5H5v5zM17,17h-3v2h5v-5h-2v3zM14,5v2h3v3h2V5h-5z"/></svg></button>
       <button id="npCc" aria-label="Captions">CC</button>
     </div>
   </div>
@@ -167,8 +169,8 @@
     <label for="text">Type on TV</label>
     <div class="field">
       <input id="text" placeholder="Type into the selected box" autocomplete="off" enterkeyhint="send">
-      <button id="clear" class="plain" aria-label="Clear the TV box">✕</button>
-      <button id="enter">↵ Enter</button>
+      <button id="clear" class="plain" aria-label="Clear the TV box"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 17.59,19 19,17.59 13.41,12z"/></svg></button>
+      <button id="enter"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M19,7v4H5.83l3.58,-3.59L8,6l-6,6 6,6 1.41,-1.41L5.83,13H21V7z"/></svg><span>Enter</span></button>
     </div>
   </div>
 
@@ -176,7 +178,7 @@
     <label for="url">Search or open a site on TV</label>
     <div class="field">
       <input id="url" type="text" inputmode="search" placeholder="e.g. cooking videos or youtube.com" autocomplete="off" autocapitalize="off" enterkeyhint="go">
-      <button id="open">Go</button>
+      <button id="open"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12,4l-1.41,1.41L16.17,11H4v2h12.17l-5.58,5.59L12,20l8,-8z"/></svg><span>Go</span></button>
     </div>
     <div id="homeLists"></div>
   </div>
@@ -185,6 +187,7 @@
 <p class="hint">Hold an arrow to keep moving. Phone and TV must be on the same Wi-Fi.</p>
 
 <script>
+  var ICON_PLAY = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M8,5v14l11,-7z"/></svg>', ICON_PAUSE = '<svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6,19h4V5H6v14zM14,5v14h4V5h-4z"/></svg>';
   var token = new URLSearchParams(location.search).get('t') || '';
   function $(id) { return document.getElementById(id); }
   function api(path, body) {
@@ -381,7 +384,7 @@
     if (!m) return;
     $('npTitle').textContent = title || '';
     $('npSeek').hidden = !(m.d > 0);
-    $('npPlay').textContent = m.playing ? '❚❚' : '▶';
+    $('npPlay').innerHTML = m.playing ? ICON_PAUSE : ICON_PLAY;
     $('npCc').hidden = !m.cc; $('npCc').className = m.ccOn ? 'on' : '';
     $('npFull').className = m.fs ? 'on' : '';
     if (m.d > 0) { $('npBar').max = Math.floor(m.d); $('npD').textContent = fmt(m.d); }
