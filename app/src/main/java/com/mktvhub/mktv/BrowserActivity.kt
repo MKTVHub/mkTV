@@ -93,8 +93,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_browser)
         prefs = Prefs(this)
-        blocker = AdBlocker(this)
-        blocker.load(prefs.blocklistUrl)
+        blocker = AdBlocker(this, prefs) // lists load in onResume
 
         root = findViewById(R.id.root)
         toolbar = findViewById(R.id.toolbar)
@@ -1672,20 +1671,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             })
         }
 
-        section(c, "Blocklist") { card ->
-            val updated = blocker.lastUpdated()
-            val ago = if (updated == 0L) "not downloaded yet" else "updated " + android.text.format.DateUtils.getRelativeTimeSpanString(updated)
-            val count = blocker.hosts.size
-            card.addView(actionRow(if (count == 0) "Loading blocklist…" else "%,d blocked hosts".format(count), ago, "Update now") { btn ->
-                btn.text = "Updating…"
-                blocker.load(prefs.blocklistUrl, force = true) { runOnUiThread { if (settingsPanel.visibility == View.VISIBLE) renderSettings() } }
-            })
-            card.addView(fieldRow("Extra blocklist URL", "Hosts-file format, refreshed daily. Leave empty to use only the built-in list.",
-                prefs.blocklistUrl, "https://…/hosts") {
-                prefs.blocklistUrl = it; settingsDirty = true
-                blocker.load(it, force = true) { runOnUiThread { if (settingsPanel.visibility == View.VISIBLE) renderSettings() } }
-            })
-        }
+        section(c, "Blocklists") { card -> renderFilterLists(card) }
 
         section(c, "Browsing") { card ->
             card.addView(toggleRow("Auto-hide the top bar", "Slides away while you use a page; press ▲ at the top or move the pointer up to bring it back", prefs.autoHideToolbar) {
@@ -1817,8 +1803,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
-    /** Label + text field; saves on Done / when focus leaves. */
-    private fun fieldRow(title: String, subtitle: String, value: String, hint: String, onSave: (String) -> Unit): View {
+    /** Label + text field; saves on Done / when focus leaves ([commitOnBlur] false: on Done only, for "add" fields). */
+    private fun fieldRow(title: String, subtitle: String, value: String, hint: String, commitOnBlur: Boolean = true, onSave: (String) -> Unit): View {
         val field = EditText(this).apply {
             setText(value); this.hint = hint
             isSingleLine = true
@@ -1832,7 +1818,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         var saved = value
         fun commit() { val v = field.text.toString().trim(); if (v != saved) { saved = v; onSave(v) } }
         field.setOnEditorActionListener { _, _, _ -> commit(); hideKeyboard(field); field.clearFocus(); true }
-        field.setOnFocusChangeListener { _, has -> if (!has) commit() }
+        if (commitOnBlur) field.setOnFocusChangeListener { _, has -> if (!has) commit() }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(12))
@@ -1862,6 +1848,152 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun subheading(t: String) = TextView(this).apply {
         text = t; setTextColor(0xFF9CA3AF.toInt()); textSize = 13f
         setPadding(dp(16), dp(14), dp(16), dp(4))
+    }
+
+    // ---- Blocklists: filter lists and allowlist (logic in AdBlocker / FilterLists) ----
+
+    private var confirmRemoveList: String? = null
+    private val ADD_LIST = "Add a list by address"
+    private val ADD_ALLOW = "Allow a domain"
+
+    /** Not while typing: re-rendering would empty the field under the keyboard. */
+    private fun rerenderWhenListsDone(): (Int) -> Unit = { runOnUiThread { if (settingsPanel.visibility == View.VISIBLE && currentFocus !is EditText) renderSettings() } }
+
+    /** Re-render after a click without pulling focus away: to [tag] if it still exists, else to the given field. */
+    private fun rerenderListsFocus(tag: String?, fallback: String) = root.post {
+        renderSettings()
+        val c = findViewById<ViewGroup>(R.id.settingsContent)
+        (tag?.let { c.findViewWithTag<View>(it) } ?: c.findViewWithTag<View>("field:$fallback"))?.requestFocus()
+    }
+
+    private fun renderFilterLists(card: LinearLayout) {
+        confirmRemoveList = null
+        val on = prefs.filterListsOn
+        val custom = prefs.customFilterLists
+        val total = blocker.hosts.size
+        val updating = blocker.status.values.any { it.updating }
+        val summary = when {
+            blocker.capped -> "Too much for a TV: only the first %,d are used. Turn some lists off.".format(FilterLists.MAX_DOMAINS)
+            total >= FilterLists.WARN_DOMAINS -> "That's a lot for a TV and may slow pages down. Turn off lists you don't need."
+            else -> "The built-in list plus the lists that are on. Each is updated once a day."
+        }
+        card.addView(actionRow(if (total == 0) "Loading blocklists…" else "%,d blocked domains".format(total), summary,
+            if (updating) "Updating…" else "Update all") {
+            blocker.load(force = true, onDone = rerenderWhenListsDone())
+            rerenderListsFocus("btn:lists:all", ADD_LIST)
+        }.also { row -> (row as ViewGroup).getChildAt(1).tag = "btn:lists:all" }) // stable tag: the title holds the count
+
+        card.addView(subheading("Built-in lists (downloaded from their authors when on)"))
+        FilterLists.PRESETS.forEach { p -> card.addView(listRow(p.id, p.name, "${p.about} · ${p.licence}", p.id in on, custom = false)) }
+        if (custom.isNotEmpty()) {
+            card.addView(subheading("Added by you"))
+            custom.forEach { (name, url) -> card.addView(listRow(FilterLists.customId(url), name, url, FilterLists.customId(url) in on, custom = true)) }
+        }
+        card.addView(fieldRow(ADD_LIST, "A hosts file (0.0.0.0 host), one domain per line, or ||domain^ rules. Press Done to add.",
+            "", "https://…/hosts.txt", commitOnBlur = false) { input ->
+            val url = FilterLists.normalizeListUrl(input)
+            val preset = FilterLists.PRESETS.firstOrNull { it.url == url }
+            when {
+                url == null -> note("That doesn't look like a web address")
+                preset != null -> { prefs.filterListsOn = prefs.filterListsOn + preset.id; note("${preset.name} is built in and now on") }
+                custom.any { it.second == url } -> note("That list is already added")
+                else -> {
+                    prefs.customFilterLists = custom + (FilterLists.nameFor(url) to url)
+                    prefs.filterListsOn = prefs.filterListsOn + FilterLists.customId(url)
+                }
+            }
+            if (url != null) { settingsDirty = true; blocker.load(onDone = rerenderWhenListsDone()) }
+            rerenderListsFocus(null, ADD_LIST)
+        })
+
+        val allow = prefs.allowlist
+        card.addView(subheading("Never blocked"))
+        allow.sorted().forEach { d ->
+            card.addView(actionRow(d, "And its subdomains", "Remove") {
+                blocker.setAllowlist(prefs.allowlist - d); settingsDirty = true
+                rerenderListsFocus(null, ADD_ALLOW)
+            })
+        }
+        val site = HostRules.siteOf(pageHost)
+        // Not offered in private mode: it would write the private page's site to Prefs.
+        if (!inPrivate && hasPage() && site != null && FilterLists.normalizeDomain(site) != null && site !in allow) {
+            card.addView(actionRow("Allow $site", "Never block requests to $site, on any page. To pause all blocking on a site, use the shield.", "Allow") {
+                blocker.setAllowlist(prefs.allowlist + site); settingsDirty = true
+                rerenderListsFocus("btn:$site", ADD_ALLOW)
+            })
+        }
+        card.addView(fieldRow(ADD_ALLOW, "It and its subdomains are never blocked, on any site. Press Done to add.",
+            "", "example.com", commitOnBlur = false) { input ->
+            val d = FilterLists.normalizeDomain(input)
+            if (d == null) note("That doesn't look like a domain") else { blocker.setAllowlist(prefs.allowlist + d); settingsDirty = true }
+            rerenderListsFocus(null, ADD_ALLOW)
+        })
+    }
+
+    /** One list: the left part toggles it (whole area is one D-pad stop), then Update and, for added lists, Remove. */
+    private fun listRow(id: String, name: String, offText: String, enabled: Boolean, custom: Boolean): View {
+        val st = blocker.status[id]
+        val updated = blocker.lastUpdated(id)
+        val ago = if (updated == 0L) null else android.text.format.DateUtils.getRelativeTimeSpanString(updated).toString().replaceFirstChar { it.lowercase() }
+        val subtitle = when {
+            !enabled -> offText
+            st?.updating == true -> "Updating…"
+            st?.error != null -> "Couldn't update (${st.error})" + (ago?.let { " · using the copy from $it" } ?: "")
+            ago == null -> "Not downloaded yet"
+            else -> "%,d domains · updated %s".format(st?.count ?: 0, ago)
+        }
+        val pill = TextView(this).apply {
+            gravity = android.view.Gravity.CENTER
+            setTextColor(android.graphics.Color.WHITE); textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            minWidth = dp(64)
+            setPadding(dp(14), 0, dp(14), 0)
+            text = if (enabled) "ON" else "OFF"
+            setBackgroundResource(if (enabled) R.drawable.pill_on else R.drawable.pill_off)
+        }
+        val toggle = rowContainer().apply {
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            addView(textBlock(name, subtitle), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(pill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32)).apply { marginStart = dp(16) })
+            isClickable = true; isFocusable = true
+            tag = "list:$id"
+            setOnClickListener {
+                prefs.filterListsOn = if (enabled) prefs.filterListsOn - id else prefs.filterListsOn + id
+                settingsDirty = true
+                blocker.load(onDone = rerenderWhenListsDone())
+                rerenderListsFocus("list:$id", ADD_LIST)
+            }
+        }
+        fun button(label: String, tag: String, danger: Boolean = false, onClick: (TextView) -> Unit) = TextView(this).apply {
+            text = label
+            gravity = android.view.Gravity.CENTER
+            setTextColor(if (danger) 0xFFFCA5A5.toInt() else android.graphics.Color.WHITE); textSize = 14f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setBackgroundResource(if (danger) R.drawable.btn_danger else R.drawable.toolbar_button)
+            setPadding(dp(16), 0, dp(16), 0)
+            isClickable = true; isFocusable = true
+            this.tag = tag
+            setOnClickListener { onClick(this) }
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(4), dp(16), dp(4))
+            addView(toggle, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            if (enabled) addView(button(if (st?.updating == true) "Updating…" else "Update", "list:$id:update") {
+                blocker.load(force = true, only = id, onDone = rerenderWhenListsDone())
+                rerenderListsFocus("list:$id:update", ADD_LIST)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)).apply { marginStart = dp(12) })
+            if (custom) addView(button("Remove", "list:$id:remove", danger = true) { btn ->
+                if (confirmRemoveList != id) { confirmRemoveList = id; btn.text = "Press again"; return@button }
+                prefs.customFilterLists = prefs.customFilterLists.filter { FilterLists.customId(it.second) != id }
+                prefs.filterListsOn = prefs.filterListsOn - id
+                blocker.forget(id)
+                settingsDirty = true
+                blocker.load(onDone = rerenderWhenListsDone())
+                rerenderListsFocus(null, ADD_LIST)
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)).apply { marginStart = dp(12) })
+        }
     }
 
     // endregion
@@ -3097,6 +3229,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         super.onResume()
         webView.onResume()
         hideSystemBars()
+        blocker.load() // builds the lists once, then refreshes any over a day old; cheap otherwise
     }
 
     /**

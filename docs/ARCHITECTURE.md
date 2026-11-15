@@ -27,7 +27,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 |---|---|
 | `BrowserActivity.kt` | Everything user-facing: WebView setup, request policy, input routing, overlays, home screen, settings, watch mode, private browsing |
 | `CursorView.kt` | A non-focusable `View` on top of everything. Pointer mode: draws an arrow, moves it on a `Choreographer` loop with acceleration, reports edge pushes for scrolling, auto-hides after 6 s. Jump mode: draws a rounded focus ring around a rectangle |
-| `AdBlocker.kt` | Builds the blocked host set from `assets/adhosts.txt` plus a downloaded hosts file cached at `filesDir/remote_hosts.txt`. The set is swapped atomically (`@Volatile`) so WebView's network threads can read it |
+| `AdBlocker.kt` | Builds the blocked host set from `assets/adhosts.txt` plus every filter list that is on, each cached at `filesDir/lists/<id>.txt` and refreshed daily on one single-thread worker. The set and the allowlist are swapped atomically (`@Volatile`) so WebView's network threads can read them |
+| `FilterLists.kt` | Android-free, unit-tested: filter list presets, the hosts / domain / `||domain^` line parser, allowlist matching, list URL and domain clean-up |
 | `HostRules.kt` | Android-free helpers, unit-tested: `isBlocked` (host or any parent domain), `siteOf` (approximate registrable domain), `sameSite`, `parseHosts`, `isStreamUrl`, `isVariantOf`, `stripTracking` |
 | `WebSearch.kt` | Android-free, unit-tested: search engines, address-bar input → URL (`normalize`), OpenSearch suggestion parsing, Favourites/History matches |
 | `History.kt` | Android-free, unit-tested: history list operations (add with de-duplication and cap, remove, retitle), search, day labels, JSON |
@@ -141,7 +142,7 @@ Release builds add `FLAG_SECURE` while private.
 ## Threads
 
 - WebView network callbacks: read `@Volatile` fields (`pageHost`, `protectionOn`, `bypassOnce`), atomic counters, `CopyOnWriteArrayList` for streams.
-- `AdBlocker.load` runs on its own thread and swaps the set when ready (bundled list first, then cached, then downloaded).
+- `AdBlocker.load` runs on a single-thread executor (so loads never race) and swaps the set when ready (bundled list first, then all cached lists, then again after any download).
 - Favicon fetches, the update check and the update download run on background threads; search suggestions on a single-thread executor.
 - Everything else is on the UI thread.
 

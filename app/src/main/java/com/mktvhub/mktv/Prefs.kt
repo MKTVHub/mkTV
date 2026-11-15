@@ -120,10 +120,45 @@ class Prefs(context: Context) {
         get() = p.getLong("total_blocked", 0)
         set(v) = p.edit().putLong("total_blocked", v).apply()
 
-    /** Optional hosts-format list downloaded once a day. Empty = bundled list only. */
-    var blocklistUrl: String
-        get() = p.getString("blocklist_url", null) ?: BuildConfig.DEFAULT_BLOCKLIST_URL
-        set(v) = p.edit().putString("blocklist_url", v.trim()).apply()
+    /** Ids of the filter lists that are on (presets and lists added by address); see [FilterLists]. */
+    var filterListsOn: Set<String>
+        get() = p.getStringSet("filter_lists_on", null)?.toSet() ?: FilterLists.PRESETS.filter { it.defaultOn }.map { it.id }.toSet()
+        set(v) = p.edit().putStringSet("filter_lists_on", v).apply()
+    /** Lists the user added by address, as (name, url) pairs. */
+    var customFilterLists: List<Pair<String, String>>
+        get() {
+            val arr = org.json.JSONArray(p.getString("custom_filter_lists", null) ?: "[]")
+            return (0 until arr.length()).map { arr.getJSONObject(it).let { o -> o.getString("name") to o.getString("url") } }
+        }
+        set(v) {
+            val arr = org.json.JSONArray()
+            v.forEach { (n, u) -> arr.put(org.json.JSONObject().put("name", n).put("url", u)) }
+            p.edit().putString("custom_filter_lists", arr.toString()).apply()
+        }
+    /** Domains (and their subdomains) that are never blocked. */
+    var allowlist: Set<String>
+        get() = p.getStringSet("allowlist", emptySet())!!.toSet()
+        set(v) = p.edit().putStringSet("allowlist", v).apply()
+
+    /**
+     * Before filter lists, a single "Extra blocklist URL" (default StevenBlack) was stored here.
+     * Moved once into [filterListsOn] / [customFilterLists]: empty = StevenBlack off, another URL = a custom list.
+     */
+    fun migrateLegacyBlocklist(): Boolean {
+        if (p.getBoolean("filter_lists_migrated", false)) return false
+        val legacy = p.getString("blocklist_url", null)
+        val sb = FilterLists.PRESETS.first { it.defaultOn }
+        when {
+            legacy == null || legacy == sb.url -> {}
+            legacy.isBlank() -> filterListsOn = filterListsOn - sb.id
+            else -> FilterLists.normalizeListUrl(legacy)?.let { url ->
+                if (FilterLists.PRESETS.none { it.url == url }) customFilterLists = customFilterLists + (FilterLists.nameFor(url) to url)
+                filterListsOn = filterListsOn - sb.id + (FilterLists.PRESETS.firstOrNull { it.url == url }?.id ?: FilterLists.customId(url))
+            }
+        }
+        p.edit().putBoolean("filter_lists_migrated", true).remove("blocklist_url").apply()
+        return legacy == null || legacy == sb.url
+    }
 
     /** Full browsing history, newest first (normal mode only, capped at [History.MAX]). */
     var history: List<History.Entry>

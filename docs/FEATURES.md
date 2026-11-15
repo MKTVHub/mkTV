@@ -149,20 +149,48 @@ Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or n
 **What.** On by default. The shield in the toolbar shows a badge with the number blocked on this page; OK opens a panel with counts for ads and trackers, pop-ups and redirects, the all-time total, and an ON/OFF switch to pause blocking on this site.
 
 **How.**
-- **Network:** subresource requests to blocked hosts (and their subdomains) get an empty response. The list is `assets/adhosts.txt` (a small, conservative list) plus a downloaded hosts file, by default the StevenBlack unified hosts list, refreshed at app start if the copy is over a day old. Settings → Blocklist shows the count, has "Update now", and lets you change or clear the URL.
+- **Network:** subresource requests to blocked hosts (and their subdomains) get an empty response, unless the host (or a parent domain) is on the allowlist. The blocked set is `assets/adhosts.txt` (a small, conservative list) plus every filter list that is on, merged into one deduplicated set (see Filter lists below).
 - **Cosmetic:** `page_script.js` hides common ad containers with CSS.
 - **Click traps:** `page_script.js` removes invisible full-screen layers that turn any click into a pop-up (fixed/absolute, z-index ≥ 100, over half the viewport, nearly transparent, no media and no text). It sweeps for 10 s after load.
 - **Pop-ups:** pop-ups without a click are dropped. Pop-ups from a click are opened only if they stay on the same site and the host is not blocked.
 - **Redirects:** script-driven jumps to another site without a click are blocked; server redirects are allowed unless blocklisted. Links to apps (`intent:`, `market:` and similar) are always blocked.
 - **Snackbar:** each blocked pop-up or redirect shows a small message with **Open anyway**, which lets that URL through once.
 
-**Where.** `AdBlocker.kt`, `HostRules.isBlocked/parseHosts/sameSite`, `shouldInterceptRequest`, `shouldOverrideUrlLoading`, `onCreateWindow`, `// region Toolbar` (`updateShield`, `bindShieldPanel`, `toggleSitePause`, `showBlocked`), `Prefs.pausedSites`, `Prefs.totalBlocked`.
+**Where.** `AdBlocker.kt`, `FilterLists.kt`, `HostRules.isBlocked/parseHosts/sameSite`, `shouldInterceptRequest`, `shouldOverrideUrlLoading`, `onCreateWindow`, `// region Toolbar` (`updateShield`, `bindShieldPanel`, `toggleSitePause`, `showBlocked`), `Prefs.pausedSites`, `Prefs.totalBlocked`.
 
 **Limits.**
 - Ads served from the site's own domain are not blocked by the host list.
 - Pausing a site, or turning "Block ads & trackers" off, stops network, pop-up and redirect blocking only. The cosmetic CSS and click-trap sweep in `page_script.js` always run, and YouTube ad pruning keeps running on a paused YouTube.
 - Pop-ups without a click are dropped even when protection is off.
 - "Sneaky redirect" detection can block a legitimate cross-site sign-in that is started by script; use Open anyway or pause the site.
+
+### Filter lists and allowlist
+
+**What.** Settings → Blocklists. A summary row shows the total number of blocked domains with **Update all**. Each list has an ON/OFF area (one D-pad stop: the name, "N domains · updated …" or why the last update failed, and the pill), an **Update** button when on, and **Remove** (press twice) for lists you added. **Add a list by address** takes any hosts or domain list URL (added on the keyboard's Done, not when focus leaves). **Never blocked** is the allowlist: remove entries, add a domain, or press **Allow <site>** for the page you came from (not offered in private mode). An allowlisted domain also covers its subdomains and wins over every list. To stop all blocking on one site, use the shield's ON/OFF instead.
+
+Built-in presets (none bundled; each is downloaded from its author only when on):
+
+| List | URL | Format | Licence | Default |
+|---|---|---|---|---|
+| StevenBlack unified | `https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts` | hosts | MIT | on |
+| StevenBlack + gambling | `…/StevenBlack/hosts/master/alternates/gambling/hosts` | hosts | MIT | off |
+| StevenBlack + fake news | `…/StevenBlack/hosts/master/alternates/fakenews/hosts` | hosts | MIT | off |
+| OISD small | `https://small.oisd.nl/domainswild` | `*.domain` | GPL-3.0 | off |
+| OISD big | `https://big.oisd.nl/domainswild` | `*.domain` | GPL-3.0 | off |
+| HaGeZi Light | `https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/light-onlydomains.txt` | domains | GPL-3.0 | off |
+| HaGeZi Normal | `…/hagezi/dns-blocklists/main/wildcard/multi-onlydomains.txt` | domains | GPL-3.0 | off |
+| HaGeZi Pro | `…/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt` | domains | GPL-3.0 | off |
+| Peter Lowe's list | `https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext` | hosts | McRae GPL (non-commercial use) | off |
+
+**How.**
+- **Parsing** (`FilterLists.parseLine`): hosts lines (`0.0.0.0 host`, `127.0.0.1 host`, `::1 host`, several hosts per line), plain domains, `*.domain`, and bare Adblock-style `||domain^`. Ignored: comments (`#` at line start or after a space, `!`), `[Adblock …]` headers, `@@` exceptions, cosmetic rules (`##`, `#@#`, `#?#`, `#$#`), rules with paths, wildcards or `$options`, IP addresses, `localhost`-style names and anything that is not a valid host name (so an HTML error page adds nothing).
+- **Updates:** at launch and whenever mkTV comes back on screen, lists whose copy is over a day old are downloaded, one at a time on one background worker. A download goes to a temp file and replaces the cached copy only if it contains at least one domain; on any failure the old copy keeps working, the row shows the error, and automatic retries wait 3 hours (Update always tries). Up to 5 redirects are followed, including http to https. Downloads over 40 MB are refused.
+- **Memory:** one `HashSet`, built by streaming each cached file line by line; lookups walk the host's parent domains as before. Above 1,000,000 domains Settings warns; at 1,500,000 the rest is left out and Settings says so. All presets on together come to roughly 500,000 domains.
+- **Migration:** an older install's "Extra blocklist URL" becomes StevenBlack on (default URL), StevenBlack off (empty), or a list added by you (another URL); the old `remote_hosts.txt` is reused as StevenBlack's copy.
+
+**Where.** `FilterLists.kt` (presets, parser, allowlist matching, URL and domain clean-up), `AdBlocker.kt` (cache, downloads, rebuild), `Prefs.filterListsOn/customFilterLists/allowlist`, `// region Settings` (`renderFilterLists`, `listRow`).
+
+**Limits.** Domain lists only: no URL-path, cosmetic or exception rules from Adblock lists. Counts are entries per list (a domain in two lists is counted in each but stored once). Several large lists can use 50–100 MB of the TV's memory.
 
 ## YouTube ad pruning
 
@@ -207,7 +235,7 @@ Sections and what they control (`renderSettings`):
 | Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
 | Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
-| Blocklist | Host count and last update, Update now, Extra blocklist URL (default StevenBlack, build-time `DEFAULT_BLOCKLIST_URL`) |
+| Blocklists | Total blocked domains and Update all; built-in filter lists (on/off, count, last update, Update); lists added by address (also Remove); Add a list by address; Never blocked (allowlist) with Allow <current site> and Allow a domain |
 | Browsing | Auto-hide the top bar, Auto-unmute videos, Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
 | Updates | Installed version and status, Check now / Update, Check for updates (daily, on by default) |
 
