@@ -105,4 +105,13 @@ class RemoteInputTest {
         assertEquals("Mac · Firefox", RemoteInput.deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 14.0; rv:120.0) Gecko/20100101 Firefox/120.0"))
         assertEquals("Device", RemoteInput.deviceLabel(null))
     }
+
+    @Test fun favouriteTarget() {
+        assertTrue(RemoteInput.favouriteTarget("add", false))
+        assertTrue(RemoteInput.favouriteTarget("add", true)) // already saved: stays saved
+        assertFalse(RemoteInput.favouriteTarget("remove", true))
+        assertFalse(RemoteInput.favouriteTarget("remove", false))
+        assertTrue(RemoteInput.favouriteTarget("toggle", false))
+        assertFalse(RemoteInput.favouriteTarget(null, true))
+    }
 }

@@ -355,13 +355,13 @@ The PIN pad is a full-screen overlay: a 3×4 grid of big keys (1–9, ✕ Cancel
 
 ## Phone remote
 
-**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing card while a video plays (seek bar, ±10 s, play/pause, full screen, captions, a speed chip that cycles 0.75× to 2×, and a sleep timer chip with Off / 15 / 30 / 60 min / End), and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, **Add to Favourites** for the TV's current page (a star that turns to **In Favourites**; tap again to remove), live typing into the focused field, the TV's Home tiles, a Now playing card while a video plays (seek bar, ±10 s, play/pause, full screen, captions, a speed chip that cycles 0.75× to 2×, and a sleep timer chip with Off / 15 / 30 / 60 min / End), and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
 
 **Panel.** Two tabs: **Connect** (QR code, steps, address, Help, New code, Share Wi-Fi) and **Devices (n)**, which lists each phone or computer using the remote with the current code (address and last activity) with a **Disconnect** button. Disconnect refuses that address until the next New code (everyone shares one code, so the address is what can be shut out).
 
 **Pairing.** The pairing code is about 128 bits from `SecureRandom` and is kept across restarts, so a bookmarked remote page keeps working. **New code** (press twice to confirm) or Settings → Phone remote → Unpair all phones makes a new code and unpairs every phone. When a new device connects, the TV shows "New phone connected" with Unpair all. Settings → Phone remote has an on/off switch.
 
-**Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `onMove`, `onMedia`, `state`, `home`), `RemoteInput.kt`. Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
+**Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `onMove`, `onMedia`, `onFavourite`, `state`, `home`), `RemoteInput.kt`. Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
 
 **Lifetime.** Once turned on, the server runs while mkTV is on screen and stops when mkTV goes to the background (`onStart` / `onStop`). The port and code stay the same.
 

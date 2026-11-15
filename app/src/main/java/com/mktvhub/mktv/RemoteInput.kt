@@ -96,4 +96,14 @@ object RemoteInput {
     }
 
     fun tiles(list: List<JSONObject>) = JSONArray().also { a -> list.forEach { a.put(it) } }
+
+    /**
+     * Whether the page should be in Favourites after /api/favourite: "add" and "remove" do nothing when it
+     * already is / isn't (so a phone showing stale state can't undo it); anything else toggles.
+     */
+    fun favouriteTarget(action: String?, saved: Boolean): Boolean = when (action) {
+        "add" -> true
+        "remove" -> false
+        else -> !saved
+    }
 }

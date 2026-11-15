@@ -54,6 +54,9 @@
   .row button span { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .row button { height:54px; border-radius:14px; border:0; background:var(--key); color:var(--text); font-size:15px; font-weight:600; }
   .row.media button { font-size:19px; }
+  .row.one { grid-template-columns:1fr; }
+  .row button:disabled { opacity:.4; }
+  #fav.on .ic { fill:#fbbf24; }
   .row.vol button { font-size:14px; }
 
   .card { background:var(--card); border-radius:16px; padding:12px; margin-top:12px; }
@@ -138,6 +141,9 @@
     <button data-key="back"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z"/></svg><span>Back</span></button>
     <button data-key="home"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10,20v-6h4v6h5v-8h3L12,3 2,12h3v8z"/></svg><span>Home</span></button>
     <button data-key="menu"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12,8c1.1,0 2,-0.9 2,-2s-0.9,-2 -2,-2 -2,0.9 -2,2 0.9,2 2,2zM12,10c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2zM12,16c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2z"/></svg><span>Menu</span></button>
+  </div>
+  <div class="row one">
+    <button id="fav" disabled><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path id="favPath" d="M22,9.24l-7.19,-0.62L12,2 9.19,8.63 2,9.24l5.46,4.73L5.82,21 12,17.27 18.18,21l-1.63,-7.03L22,9.24zM12,15.4l-3.76,2.27 1,-4.28 -3.32,-2.88 4.38,-0.38L12,6.1l1.71,4.04 4.38,0.38 -3.32,2.88 1,4.28L12,15.4z"/></svg><span id="favT">Add to Favourites</span></button>
   </div>
   <div class="row media">
     <button data-key="prev" aria-label="Previous"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M6,6h2v12H6zM9.5,12l8.5,6V6z"/></svg></button>
@@ -481,6 +487,32 @@
   });
   window.addEventListener('blur', function () { Object.keys(down).forEach(function (k) { api('/api/key', { key: k, action: 'up' }); }); down = {}; });
 
+  // ---- Add to Favourites: the TV's current page, like ⋮ → Add to Favourites. ----
+  var STAR_EMPTY = $('favPath').getAttribute('d'), STAR_FULL = 'M12,17.27L18.18,21l-1.64,-7.03L22,9.24l-7.19,-0.61L12,2 9.19,8.63 2,9.24l5.46,4.73L5.82,21z';
+  var fav = false, favCan = false, favBusy = false, favNote = 0;
+  function renderFav(can, saved) {
+    fav = !!saved; favCan = !!can;
+    $('fav').disabled = !can || favBusy;
+    $('fav').className = fav ? 'on' : '';
+    $('favPath').setAttribute('d', fav ? STAR_FULL : STAR_EMPTY);
+    if (Date.now() > favNote) $('favT').textContent = fav ? 'In Favourites' : 'Add to Favourites';
+  }
+  $('fav').onclick = function () {
+    buzz(); favBusy = true; $('fav').disabled = true;
+    api('/api/favourite', { action: fav ? 'remove' : 'add' })
+      .then(function (r) { return r && r.ok ? r.json() : null; })
+      .then(function (res) {
+        favBusy = false;
+        if (!res || !res.ok) { $('favT').textContent = 'No page open'; favNote = Date.now() + 1500; renderFav(false, false); return; }
+        $('favT').textContent = res.fav ? 'Added to Favourites' : 'Removed from Favourites';
+        favNote = Date.now() + 1500;
+        renderFav(true, res.fav);
+        setTimeout(function () { renderFav(favCan, fav); }, 1600); // back to the state label
+        loadHome();
+      })
+      .catch(function () { favBusy = false; renderFav(favCan, fav); });
+  };
+
   // ---- State: title, pointer mode, video. Faster while a video plays; paused while this tab is hidden. ----
   var pollTimer = null, pollGen = 0;
   function poll() {
@@ -492,6 +524,7 @@
       if (pointer !== !!s.pointer) { pointer = !!s.pointer; $('touch').hint(); }
       renderMedia(s.media || null, s.title);
       if (s.sleep) renderSleep(s.sleep);
+      if (!favBusy) renderFav(s.canFav, s.fav);
     }).catch(function () { setOnline(false); }).then(function () {
       if (gen === pollGen) pollTimer = setTimeout(poll, media ? 1000 : 2500);
     });

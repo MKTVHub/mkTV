@@ -28,6 +28,8 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         /** Touchpad drag in pointer mode, in phone CSS px. */
         fun onMove(dx: Double, dy: Double)
         fun onMedia(action: String, value: Double)
+        /** Adds the TV's current page to Favourites or removes it ([RemoteInput.favouriteTarget]); {"ok", "fav"}. */
+        fun onFavourite(action: String?): JSONObject
         fun state(): JSONObject
         fun home(): JSONObject
         /** The TV's saved favicon (PNG) for [host], already validated by [RemoteInput.iconHost]. */
@@ -204,6 +206,8 @@ class RemoteServer(private val context: Context, private val listener: Listener,
                 if (value == null) respond(400, "application/json", "{\"ok\":false}")
                 else { listener.onMedia(action, value); respond(200, "application/json", ok) }
             }
+            method == "POST" && path == "/api/favourite" ->
+                respond(200, "application/json", listener.onFavourite(json.optString("action")).toString())
             else -> respond(404, "application/json", "{\"ok\":false}")
         }
     }

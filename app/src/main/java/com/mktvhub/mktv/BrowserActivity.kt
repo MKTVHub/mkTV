@@ -3533,6 +3533,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private val heldKeys = HashMap<Int, Runnable>()
 
+    private fun releaseHeldKeys() {
+        heldKeys.values.forEach { root.removeCallbacks(it) }
+        heldKeys.clear()
+    }
+
     /**
      * Phone keys are dispatched straight into the activity, which skips the step of Android's input
      * pipeline that moves focus between views on arrow keys (only scrolling containers handled ▲▼ by
@@ -3580,6 +3585,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                     var count = 1
                     override fun run() {
                         val t = SystemClock.uptimeMillis()
+                        // The phone's "up" can get lost (screen locked, Wi-Fi blip): let go by itself rather than repeat forever.
+                        if (t - downTime > HELD_KEY_MAX_MS) { heldKeys.remove(code); sendRemoteKey(KeyEvent(downTime, t, KeyEvent.ACTION_UP, code, 0)); return }
                         sendRemoteKey(KeyEvent(downTime, t, KeyEvent.ACTION_DOWN, code, count++, 0, 0, 0, KeyEvent.FLAG_LONG_PRESS.takeIf { count == 2 } ?: 0))
                         root.postDelayed(this, 90)
                     }
@@ -3670,6 +3677,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         runOnUiThread {
             base.set(org.json.JSONObject().put("title", webView.title ?: "mkTV").put("url", webView.url ?: "")
                 .put("nav", prefs.navMode).put("pointer", pointerActive())
+                .put("canFav", hasPage()).put("fav", hasPage() && isFavourite(webView.url))
                 // Sleep timer: minutes chosen (0 off, -1 end of video) and whole seconds left for a timed one.
                 .put("sleep", org.json.JSONObject().put("mode", sleepMode).put("left", (sleepLeftMs() + 999) / 1000)))
             if (!hasPage()) latch.countDown()
@@ -3679,6 +3687,24 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val o = base.get() ?: org.json.JSONObject().put("title", "mkTV")
         parseJs(media.get())?.takeIf { it.optBoolean("has") }?.let { o.put("media", it) }
         return o
+    }
+
+    /** The phone's Add to Favourites button: same as the ⋮ menu item (toast on the TV), answered with the new state. */
+    override fun onFavourite(action: String?): org.json.JSONObject {
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val out = java.util.concurrent.atomic.AtomicReference<org.json.JSONObject>()
+        runOnUiThread {
+            val url = webView.url
+            out.set(if (!hasPage()) org.json.JSONObject().put("ok", false) else {
+                val saved = isFavourite(url)
+                if (RemoteInput.favouriteTarget(action, saved) != saved) toggleFavourite()
+                if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
+                org.json.JSONObject().put("ok", true).put("fav", isFavourite(url))
+            })
+            latch.countDown()
+        }
+        latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
+        return out.get() ?: org.json.JSONObject().put("ok", false)
     }
 
     /** Home lists for the phone, as on the TV's Home screen. Never Recent while private browsing. */
@@ -4975,6 +5001,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         unlockedAt = 0
         pinPad.cancel()
         remoteServer.stop()
+        releaseHeldKeys() // the server is gone, so no "up" can arrive
         downloads.onStop()
         TvHome.sync(this, foreground = false) // cheap when nothing changed
     }
@@ -5007,6 +5034,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         )
         /** OK presses this soon after mkTV comes to the front are the launcher's, not the user's choice. */
         private const val LAUNCH_GUARD_MS = 900L
+        /** A phone button held this long lets go by itself (its "up" may never arrive). */
+        private const val HELD_KEY_MAX_MS = 10_000L
         private const val PRIVATE_PROFILE = "private"
         /** Run on a tab as it goes to the background, so its video or music doesn't keep playing unseen. */
         private const val PAUSE_MEDIA_JS =
