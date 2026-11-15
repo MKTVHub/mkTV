@@ -261,9 +261,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 updateStreamButton()
                 if (!urlField.hasFocus()) urlField.setText(url)
                 if (!docStartScript) { view.evaluateJavascript(pageScript, null); if (prefs.adBlock) view.evaluateJavascript(ytScript, null) }
+                filling = false; applyZoom(view, url)
                 updateNav()
                 updateStar()
             }
+
+            // First paint of the new document: apply its zoom before the user sees it at 100 %.
+            override fun onPageCommitVisible(view: WebView, url: String) { if (view === webView) applyZoom(view, url) }
 
             override fun onPageFinished(view: WebView, url: String) {
                 if (view !== webView) return
@@ -271,6 +275,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 updateStar()
                 scheduleHideBar(3000)
                 if (!docStartScript) view.evaluateJavascript(pageScript, null)
+                applyZoom(view, url)
                 if (!urlField.hasFocus()) urlField.setText(url)
                 updateNav()
             }
@@ -291,6 +296,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
             override fun onShowCustomView(view: View, callback: CustomViewCallback) {
                 if (customView != null) { callback.onCustomViewHidden(); return }
+                if (filling) exitFill() // the page's real full screen took over
                 customView = view
                 customViewCallback = callback
                 fullscreenContainer.addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -444,6 +450,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         blockedAds.set(0); blockedPopups.set(0); blockedRedirects.set(0); updateShield()
         cursor.showRing(null)
         if (webView.url.isNullOrBlank()) urlField.setText("")
+        filling = false; privateZoom.clear()
     }
 
     private fun applyPrivateLook() {
@@ -1697,6 +1704,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 webView.evaluateJavascript(flag, null)
                 note("Takes full effect after restarting the app")
             })
+            card.addView(zoomSettingRow())
             card.addView(toggleRow("Desktop sites", "Ask sites for their desktop version (bigger layouts, fewer app banners)", prefs.desktopMode) {
                 prefs.desktopMode = it; applyUserAgent(); settingsDirty = true
             })
@@ -1862,6 +1870,190 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun subheading(t: String) = TextView(this).apply {
         text = t; setTextColor(0xFF9CA3AF.toInt()); textSize = 13f
         setPadding(dp(16), dp(14), dp(16), dp(4))
+    }
+
+    // endregion
+
+    // region Zoom and full-screen fill
+    // Page zoom (⋮ → Zoom, Settings → Browsing → Default zoom) and the full-screen fallback for players that
+    // can't use real full screen in WebView. Why CSS zoom: see PageZoom. JS side: __sp.zoom / fill / unfill.
+
+    /** Private browsing keeps its zoom changes here only, so no visited host is written to Prefs. */
+    private val privateZoom = HashMap<String, Int>()
+
+    /** TV interfaces (YouTube TV) already size themselves to the screen, so they ignore the default zoom. */
+    private fun defaultZoomFor(url: String?) = if (isTvSite(url)) PageZoom.DEFAULT else prefs.defaultZoom
+
+    private fun zoomFor(url: String?): Int {
+        val host = url?.let { Uri.parse(it).host }
+        if (inPrivate) PageZoom.hostKey(host)?.let { privateZoom[it] }?.let { return it }
+        return PageZoom.levelFor(host, prefs.siteZoom, defaultZoomFor(url))
+    }
+
+    private fun applyZoom(view: WebView = webView, url: String? = view.url) =
+        view.evaluateJavascript(PageZoom.script(zoomFor(url)), null)
+
+    /** Applies live and saves at once (per host); no Save button. */
+    private fun setZoom(pct: Int) {
+        val url = webView.url ?: return
+        val host = Uri.parse(url).host
+        val key = PageZoom.hostKey(host) ?: return
+        if (inPrivate) privateZoom[key] = PageZoom.snap(pct)
+        else prefs.siteZoom = PageZoom.withLevel(prefs.siteZoom, host, pct, defaultZoomFor(url))
+        applyZoom()
+    }
+
+    private fun zoomButton(label: String, tag: String, onClick: () -> Unit) = TextView(this).apply {
+        text = label; gravity = android.view.Gravity.CENTER; textSize = 18f
+        setTextColor(android.graphics.Color.WHITE); setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setBackgroundResource(R.drawable.toolbar_button); setPadding(dp(16), 0, dp(16), 0)
+        minWidth = dp(52)
+        isClickable = true; isFocusable = true
+        this.tag = tag
+        setOnClickListener { onClick() }
+    }
+
+    private fun zoomValue() = TextView(this).apply {
+        gravity = android.view.Gravity.CENTER; textSize = 17f
+        setTextColor(android.graphics.Color.WHITE); setTypeface(typeface, android.graphics.Typeface.BOLD)
+        minWidth = dp(84)
+    }
+
+    /** ⋮ → Zoom: − / value / + / Reset inside the menu, like Clear browsing data. */
+    private fun showZoomMenu() {
+        inSubMenu = true
+        menuPanel.removeAllViews()
+        val url = webView.url
+        menuPanel.addView(TextView(this).apply {
+            text = "Zoom"
+            setTextColor(android.graphics.Color.WHITE); textSize = 17f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(dp(14), dp(10), dp(14), dp(2))
+        })
+        val note = TextView(this).apply {
+            setTextColor(0xFF9CA3AF.toInt()); textSize = 13f
+            setPadding(dp(14), 0, dp(14), dp(8))
+        }
+        menuPanel.addView(note)
+        val value = zoomValue()
+        lateinit var minus: TextView
+        lateinit var plus: TextView
+        fun paint() {
+            val pct = zoomFor(url)
+            value.text = PageZoom.label(pct)
+            minus.alpha = if (PageZoom.canStep(pct, -1)) 1f else 0.4f
+            plus.alpha = if (PageZoom.canStep(pct, 1)) 1f else 0.4f
+            val site = url?.let { prettyHost(it) } ?: "this site"
+            note.text = (if (inPrivate) "$site · this private session only" else "Remembered for $site") +
+                "\nDefault ${PageZoom.label(defaultZoomFor(url))} in Settings"
+        }
+        minus = zoomButton("−", "zoom:-") { setZoom(PageZoom.step(zoomFor(url), -1)); paint() }
+        plus = zoomButton("+", "zoom:+") { setZoom(PageZoom.step(zoomFor(url), 1)); paint() }
+        val reset = zoomButton("Reset", "zoom:reset") { setZoom(defaultZoomFor(url)); paint() }.apply { textSize = 15f }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(4), dp(10), dp(10))
+            addView(minus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            addView(value, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            addView(plus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            addView(reset, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginStart = dp(14) })
+        }
+        menuPanel.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        paint()
+        trapMenuFocus()
+        // One row of buttons: ▲/▼ stay on it instead of escaping to the toolbar.
+        listOf(minus, plus, reset).forEach { it.nextFocusUpId = it.id; it.nextFocusDownId = it.id }
+        plus.requestFocus()
+    }
+
+    /** Settings → Browsing: default zoom with − / +, and a reset for sites that have their own level. */
+    private fun zoomSettingRow(): View {
+        val value = zoomValue()
+        val sub = TextView(this).apply { setTextColor(0xFF9CA3AF.toInt()); textSize = 13f; setPadding(0, dp(2), 0, 0) }
+        lateinit var minus: TextView
+        lateinit var plus: TextView
+        lateinit var clear: TextView
+        fun paint() {
+            val pct = prefs.defaultZoom
+            value.text = PageZoom.label(pct)
+            minus.alpha = if (PageZoom.canStep(pct, -1)) 1f else 0.4f
+            plus.alpha = if (PageZoom.canStep(pct, 1)) 1f else 0.4f
+            val n = prefs.siteZoom.size
+            sub.text = "For every site without its own zoom (⋮ → Zoom)." + if (n > 0) " $n site${if (n == 1) " has" else "s have"} their own." else ""
+            clear.visibility = if (n > 0) View.VISIBLE else View.GONE
+        }
+        fun change(pct: Int) { prefs.defaultZoom = pct; applyZoom(); paint() }
+        minus = zoomButton("−", "zoomdef:-") { change(PageZoom.step(prefs.defaultZoom, -1)) }
+        plus = zoomButton("+", "zoomdef:+") { change(PageZoom.step(prefs.defaultZoom, 1)) }
+        clear = zoomButton("Reset sites", "zoomdef:reset") {
+            prefs.siteZoom = emptyMap(); applyZoom(); paint()
+            plus.requestFocus()
+        }.apply { textSize = 14f }
+        val row = rowContainer().apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(context).apply { text = "Default zoom"; setTextColor(android.graphics.Color.WHITE); textSize = 17f })
+                addView(sub)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(minus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { marginStart = dp(16) })
+            addView(value, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+            addView(plus, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+            addView(clear, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { marginStart = dp(12) })
+        }
+        paint()
+        return row
+    }
+
+    // ---- Full-screen fill: the video covers the window with CSS when real full screen doesn't happen ----
+
+    private var filling = false
+    private val FILL_FALLBACK_MS = 900L
+    /** Bumped on every request so a late fallback check can't fire on a newer page or request. */
+    private var fullscreenGen = 0
+
+    private fun afterFullscreenRequest(res: String?) {
+        val fs = PageZoom.parseFs(res)
+        val gen = ++fullscreenGen
+        val url = webView.url
+        when (fs) {
+            PageZoom.Fs.FAILED -> enterFill()
+            PageZoom.Fs.REQUESTED -> {
+                flash("⛶")
+                // The page's full-screen view normally appears within a few frames; if not, fill instead.
+                root.postDelayed({
+                    if (gen == fullscreenGen && url == webView.url && PageZoom.needsFill(fs, customView != null, filling)) enterFill()
+                }, FILL_FALLBACK_MS)
+            }
+            PageZoom.Fs.NO_VIDEO -> Unit
+        }
+    }
+
+    private fun enterFill() {
+        webView.evaluateJavascript("window.__sp && __sp.fill ? __sp.fill() : null") { res ->
+            if (res?.trim('"') != "fill" || customView != null) return@evaluateJavascript
+            filling = true
+            // Watch mode owns the keys: OK / Play-Pause toggle, ◀ ▶ seek, ▲ or Back exit.
+            if (!watching) enterWatch(false) else showDock()
+            cursor.showRing(null)
+            hideBar()
+            flash("⛶")
+        }
+    }
+
+    private fun exitFill() {
+        fullscreenGen++
+        if (!filling) return
+        filling = false
+        webView.evaluateJavascript("window.__sp && __sp.unfill && __sp.unfill()", null)
+        if (watching) showDock()
+    }
+
+    /** The page is the source of truth: it gives up fill when the video goes away, or keeps it across a WebView switch. */
+    private fun syncFill(pageFilling: Boolean) {
+        if (pageFilling == filling) return
+        filling = pageFilling
+        if (filling) { if (!watching) enterWatch(false); hideBar() } else if (watching) showDock()
     }
 
     // endregion
@@ -2246,6 +2438,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             prefs.navMode = if (jumpMode) "pointer" else "jump"
             applyNavMode(); buildMenu()
         }
+        item(R.drawable.ic_zoom, "Zoom", PageZoom.label(zoomFor(webView.url)), enabled = hasPage()) { showZoomMenu() }
         item(R.drawable.ic_desktop, "Desktop site", if (prefs.desktopMode) "On" else "Off") {
             prefs.desktopMode = !prefs.desktopMode; applyUserAgent(); if (hasPage()) webView.reload(); buildMenu()
         }
@@ -2771,7 +2964,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun hideBar() {
-        if (!barShown || !canHideBar()) return
+        if (!barShown || !(canHideBar() || (filling && !overlayOpen()))) return
         barShown = false
         topBar.animate().translationY(-topBar.height.toFloat()).setDuration(220).start()
     }
@@ -2789,6 +2982,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             val o = parseJs(res) ?: return@evaluateJavascript
             val has = o.optBoolean("has")
             noVideoChecks = if (has) 0 else noVideoChecks + 1
+            syncFill(o.optBoolean("fill"))
             when {
                 has && o.optBoolean("playing") && !watching && watchDismissedFor != webView.url -> enterWatch(o.optBoolean("vertical"))
                 // Feeds briefly have no big video between items; only leave after ~3 s without one.
@@ -2807,16 +3001,16 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         showDock()
     }
 
-    private val theater get() = customView != null
+    /** Real full screen (the page's own view) or the CSS fill fallback. */
+    private val theater get() = customView != null || filling
 
     private fun toggleTheater() {
         if (customView != null) { exitFullscreen(notifyPage = true); return }
+        if (filling) { exitFill(); return }
         // A key press counts as user activation, which the Fullscreen API requires.
         webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F12))
         webView.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F12))
-        webView.evaluateJavascript("window.__sp ? __sp.fullscreen() : null") { res ->
-            if (res?.trim('"') == "on") flash("⛶")
-        }
+        webView.evaluateJavascript("window.__sp ? __sp.fullscreen() : null") { res -> afterFullscreenRequest(res) }
     }
 
     private fun exitWatch(silent: Boolean = false) {
@@ -2950,6 +3144,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun onBackPressed() {
         when {
             customView != null -> exitFullscreen(notifyPage = true)
+            filling && !overlayOpen() -> exitFill()
             suggestOpen() && isInside(suggestPanel, currentFocus) -> urlField.requestFocus()
             suggestOpen() -> hideSuggestions()
             wifiPanel.visibility == View.VISIBLE && currentFocus is EditText -> { hideKeyboard(currentFocus as EditText); wifiPanel.requestFocus() }

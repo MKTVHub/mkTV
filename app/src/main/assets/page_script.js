@@ -149,8 +149,10 @@
 
   function report() {
     if (!cur || !document.contains(cur)) return null;
-    var r = rectOf(cur);
-    return JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height, iw: innerWidth });
+    var r = rectOf(cur), zf = 1;
+    // Page zoom: older Chromium reports boxes in unzoomed px; zoomFactor() converts (1 on current versions).
+    try { if (window.__sp && __sp.zoomFactor) zf = __sp.zoomFactor() || 1; } catch (e) {}
+    return JSON.stringify({ x: r.left, y: r.top, w: r.width, h: r.height, iw: innerWidth / zf });
   }
 
   function inView(r) { return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; }
@@ -276,6 +278,8 @@
 
   // Largest visible <video> in this document (players in cross-origin iframes aren't reachable).
   function mainVideo() {
+    // The fill IIFE below also looks inside same-origin iframes and pins the filled video.
+    try { if (window.__sp && __sp.video) return __sp.video(); } catch (e) {}
     var vids = document.getElementsByTagName('video'), best = null, ba = 0;
     for (var i = 0; i < vids.length; i++) {
       var r = vids[i].getBoundingClientRect();
@@ -320,7 +324,8 @@
     media: function () {
       var v = mainVideo();
       if (!v) return JSON.stringify({ has: false });
-      return JSON.stringify({ has: true, playing: !v.paused && !v.ended, vertical: v.videoHeight > v.videoWidth });
+      return JSON.stringify({ has: true, playing: !v.paused && !v.ended, vertical: v.videoHeight > v.videoWidth,
+        fill: !!(window.__sp.filling && __sp.filling()) });
     },
     toggle: function () {
       var v = mainVideo(); if (!v) return null;
@@ -343,7 +348,8 @@
         cc++; if (tr[i].mode === 'showing') on = true;
       }
       return JSON.stringify({ has: true, playing: !v.paused && !v.ended, t: v.currentTime || 0,
-        d: isFinite(v.duration) ? v.duration : 0, cc: cc > 0, ccOn: on, fs: !!document.fullscreenElement });
+        d: isFinite(v.duration) ? v.duration : 0, cc: cc > 0, ccOn: on,
+        fs: !!document.fullscreenElement || !!(window.__sp.filling && __sp.filling()) });
     },
     seekTo: function (t) {
       var v = mainVideo(); if (!v || !isFinite(v.duration)) return null;
@@ -364,14 +370,244 @@
     },
     // Real full screen via the Fullscreen API. Needs a recent user activation, which the app
     // provides by sending a harmless key to the page just before calling this.
+    // 'on' = asked (the app falls back to __sp.fill() if no full-screen view appears), 'fail' = can't ask.
     fullscreen: function () {
-      if (document.fullscreenElement) { document.exitFullscreen(); return 'off'; }
-      var v = mainVideo(); if (!v) return null;
-      var box = v.closest('.html5-video-player, #movie_player, #player-container-id, .player-container, [class*="video-player" i]') || v;
-      var p = (box.requestFullscreen || box.webkitRequestFullscreen).call(box);
-      if (p && p.catch) p.catch(function () { (v.requestFullscreen || v.webkitRequestFullscreen).call(v); });
-      return 'on';
+      try {
+        if (document.fullscreenElement) { document.exitFullscreen(); return 'off'; }
+        var v = mainVideo(); if (!v) return null;
+        // Video in a same-origin iframe: full-screening the frame would not enlarge the video in it.
+        if (v.ownerDocument !== document || document.fullscreenEnabled === false) return 'fail';
+        var box = v.closest('.html5-video-player, #movie_player, #player-container-id, .player-container, [class*="video-player" i]') || v;
+        var req = box.requestFullscreen || box.webkitRequestFullscreen;
+        if (!req) return 'fail';
+        var p = req.call(box);
+        if (p && p.catch) p.catch(function () {
+          try {
+            var r2 = v.requestFullscreen || v.webkitRequestFullscreen;
+            var q = r2 && r2.call(v);
+            if (q && q.catch) q.catch(function () {});
+          } catch (e) {}
+        });
+        return 'on';
+      } catch (e) { return 'fail'; }
     }
+  };
+})();
+
+// ---- Page zoom and full-screen fallback ("fill"): top frame only, adds to window.__sp ----
+// Zoom: CSS zoom on <html> reflows the whole page (text, images, buttons) at the chosen size; why not
+// textZoom / page scale is explained in PageZoom.kt. Fill: when a site's player can't use the Fullscreen
+// API in WebView, the main <video> (or the same-origin iframe holding it) is pinned over the whole
+// viewport with CSS and everything else is hidden; unfill() puts the page back exactly as it was.
+(function () {
+  if (window.top !== window || !window.__sp || window.__sp.zoom) return;
+  var sp = window.__sp;
+
+  // ---- zoom ----
+  var zoomPct = 100, zoomCal = null;
+  function applyZoom() {
+    var root = document.documentElement;
+    if (!root) return;
+    var s = document.getElementById('__sp_zoom');
+    if (!s) {
+      s = document.createElement('style');
+      s.id = '__sp_zoom';
+      // A child of <html>, not <head>: survives frameworks that rebuild the head.
+      root.appendChild(s);
+    }
+    s.textContent = zoomPct === 100 ? '' : 'html{zoom:' + (zoomPct / 100) + ' !important}';
+  }
+  sp.zoom = function (pct) {
+    try {
+      pct = Math.round(+pct);
+      if (!(pct >= 25 && pct <= 500)) pct = 100;
+      if (pct === zoomPct && document.getElementById('__sp_zoom')) return String(pct);
+      zoomPct = pct; zoomCal = null;
+      if (document.documentElement) applyZoom();
+      else document.addEventListener('DOMContentLoaded', function () { try { applyZoom(); } catch (e) {} });
+      return String(pct);
+    } catch (e) { return null; }
+  };
+  // Boxes from getBoundingClientRect → viewport px. Chromium 128+ already reports zoomed boxes (factor 1);
+  // older versions report unzoomed ones (factor = zoom). Measured once per level with a probe.
+  sp.zoomFactor = function () {
+    var root = document.documentElement;
+    if (zoomPct === 100 || !root || root.hasAttribute('data-sp-filling')) return 1;
+    if (zoomCal) return zoomCal;
+    zoomCal = 1;
+    try {
+      var p = document.createElement('div');
+      p.style.cssText = 'position:fixed;left:0;top:0;width:100px;height:1px;visibility:hidden;pointer-events:none';
+      document.documentElement.appendChild(p);
+      var w = p.getBoundingClientRect().width;
+      p.remove();
+      var f = w > 0 ? zoomPct / w : 1;
+      if (f > 0.3 && f < 5 && Math.abs(f - 1) > 0.02) zoomCal = f;
+    } catch (e) {}
+    return zoomCal;
+  };
+
+  // ---- finding the main video, including same-origin iframes ----
+  function playing(v) { return !v.paused && !v.ended && v.readyState > 2; }
+
+  // Calls fn(video, rectInTopViewport, frameChain) for every <video>; frameChain lists the iframes it sits in.
+  function eachVideo(fn) {
+    function walk(doc, ox, oy, chain, depth) {
+      var vids = doc.getElementsByTagName('video');
+      for (var i = 0; i < vids.length; i++) {
+        try {
+          var r = vids[i].getBoundingClientRect();
+          fn(vids[i], { left: ox + r.left, top: oy + r.top, right: ox + r.right, bottom: oy + r.bottom, width: r.width, height: r.height }, chain);
+        } catch (e) {}
+      }
+      if (depth >= 2) return;
+      var frames = doc.getElementsByTagName('iframe');
+      for (var j = 0; j < frames.length; j++) {
+        try {
+          var d = frames[j].contentDocument; // null or throws for cross-origin frames
+          if (!d || !d.documentElement) continue;
+          var fr = frames[j].getBoundingClientRect();
+          walk(d, ox + fr.left + frames[j].clientLeft, oy + fr.top + frames[j].clientTop, chain.concat([frames[j]]), depth + 1);
+        } catch (e) {}
+      }
+    }
+    walk(document, 0, 0, [], 0);
+  }
+
+  // Largest visible video (playing ones count double when preferPlaying). relaxed: ignore the viewport,
+  // used while filling, when everything else is hidden and a replacement video may be laid out off screen.
+  function bestVideo(preferPlaying, relaxed) {
+    var best = null, bs = 0, f = sp.zoomFactor(), vw = innerWidth, vh = innerHeight;
+    eachVideo(function (v, r, chain) {
+      var area;
+      if (relaxed) area = r.width * r.height * f * f;
+      else {
+        var w = Math.max(0, Math.min(r.right * f, vw) - Math.max(r.left * f, 0));
+        var h = Math.max(0, Math.min(r.bottom * f, vh) - Math.max(r.top * f, 0));
+        area = w * h;
+      }
+      if (area <= 0) return;
+      var s = area * (preferPlaying && playing(v) ? 2 : 1);
+      if (s > bs) { bs = s; best = { v: v, chain: chain, area: area }; }
+    });
+    if (!best) return null;
+    if (!relaxed && best.area <= 0.25 * vw * vh) return null;
+    return best;
+  }
+
+  // ---- fill ----
+  var CSS =
+    'html[data-sp-filling]{zoom:1 !important;overflow:hidden !important;background:#000 !important}' +
+    'html[data-sp-filling] body{overflow:hidden !important}' +
+    'html[data-sp-filling] body *:not([data-sp-fill]):not([data-sp-fill-path]){visibility:hidden !important}' +
+    // Ancestors: drop anything that would trap a position:fixed child or fade/clip it.
+    '[data-sp-fill-path]{visibility:visible !important;transform:none !important;filter:none !important;' +
+    'backdrop-filter:none !important;perspective:none !important;contain:none !important;will-change:auto !important;' +
+    'clip-path:none !important;-webkit-mask:none !important;mask:none !important;opacity:1 !important;content-visibility:visible !important}' +
+    // Percent sizes, not vw/vh: they stay right under any leftover zoom.
+    '[data-sp-fill]{visibility:visible !important;display:block !important;position:fixed !important;left:0 !important;top:0 !important;' +
+    'right:0 !important;bottom:0 !important;width:100% !important;height:100% !important;min-width:0 !important;min-height:0 !important;' +
+    'max-width:none !important;max-height:none !important;margin:0 !important;padding:0 !important;border:0 !important;' +
+    'transform:none !important;opacity:1 !important;clip-path:none !important;z-index:2147483647 !important;' +
+    'background:#000 !important;object-fit:contain !important}';
+
+  var state = null; // { v, marked: [elements], docs: [documents], sx, sy, misses, timer }
+
+  function markDoc(doc, target, st) {
+    if (!doc.getElementById('__sp_fill_css')) {
+      var s = doc.createElement('style');
+      s.id = '__sp_fill_css';
+      s.textContent = CSS;
+      doc.documentElement.appendChild(s);
+    }
+    doc.documentElement.setAttribute('data-sp-filling', '');
+    st.docs.push(doc);
+    target.setAttribute('data-sp-fill', '');
+    st.marked.push(target);
+    for (var p = target.parentElement; p && p !== doc.documentElement; p = p.parentElement) {
+      p.setAttribute('data-sp-fill-path', '');
+      st.marked.push(p);
+    }
+  }
+
+  function clearMarks(st) {
+    st.marked.forEach(function (el) { try { el.removeAttribute('data-sp-fill'); el.removeAttribute('data-sp-fill-path'); } catch (e) {} });
+    st.docs.forEach(function (d) {
+      try {
+        d.documentElement.removeAttribute('data-sp-filling');
+        var s = d.getElementById('__sp_fill_css');
+        if (s) s.remove();
+      } catch (e) {}
+    });
+    st.marked = []; st.docs = [];
+  }
+
+  function pin(st, found) {
+    st.v = found.v;
+    // Outermost first: the top document pins the iframe, the iframe's document pins the video.
+    var docs = [document], targets = found.chain.concat([found.v]);
+    for (var i = 0; i < found.chain.length; i++) docs.push(found.chain[i].contentDocument);
+    for (var k = 0; k < targets.length; k++) markDoc(docs[k], targets[k], st);
+  }
+
+  function stillPinned(st) {
+    if (!st.v || !st.v.isConnected) return false;
+    for (var i = 0; i < st.marked.length; i++) if (!st.marked[i].isConnected) return false;
+    return st.v.hasAttribute('data-sp-fill');
+  }
+
+  // Single-page sites swap the <video> on navigation or between items: follow the new one.
+  function watch() {
+    var st = state;
+    if (!st) return;
+    try {
+      var ok = stillPinned(st);
+      // A paused video stays pinned; only an ended or emptied one (kept in the page by some SPAs) is swapped.
+      if (ok && (st.v.ended || !(st.v.currentSrc || st.v.src || st.v.srcObject))) {
+        var alt = bestVideo(true, true);
+        if (alt && alt.v !== st.v && playing(alt.v)) ok = false;
+      }
+      if (ok) { st.misses = 0; return; }
+      clearMarks(st);
+      var found = bestVideo(true, true);
+      if (found) { st.misses = 0; pin(st, found); return; }
+      if (++st.misses >= 6) sp.unfill(); // ~5 s without any video: give the page back
+    } catch (e) {}
+  }
+
+  sp.fill = function () {
+    try {
+      if (state) return 'fill';
+      var found = bestVideo(true, false);
+      if (!found) return null;
+      var st = { v: null, marked: [], docs: [], sx: scrollX, sy: scrollY, misses: 0, timer: 0 };
+      pin(st, found);
+      state = st;
+      st.timer = setInterval(watch, 800);
+      return 'fill';
+    } catch (e) {
+      try { if (state) sp.unfill(); } catch (e2) {}
+      return null;
+    }
+  };
+
+  sp.unfill = function () {
+    var st = state;
+    if (!st) return 'off';
+    state = null;
+    try { clearInterval(st.timer); } catch (e) {}
+    try { clearMarks(st); } catch (e) {}
+    try { scrollTo(st.sx, st.sy); } catch (e) {}
+    return 'off';
+  };
+
+  sp.filling = function () { return !!state; };
+
+  // Used by the watch-mode helpers (mainVideo): the filled video while filling, else the largest visible one.
+  sp.video = function () {
+    if (state && state.v && state.v.isConnected) return state.v;
+    var b = bestVideo(false, false);
+    return b ? b.v : null;
   };
 })();
 

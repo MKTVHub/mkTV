@@ -32,10 +32,11 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `WebSearch.kt` | Android-free, unit-tested: search engines, address-bar input → URL (`normalize`), OpenSearch suggestion parsing, Favourites/History matches |
 | `History.kt` | Android-free, unit-tested: history list operations (add with de-duplication and cap, remove, retitle), search, day labels, JSON |
 | `Updates.kt` | Android-free, unit-tested: GitHub release parsing, numeric version comparison, once-a-day check |
+| `PageZoom.kt` | Android-free, unit-tested: zoom levels and steps, per-host keys and storage, when to fall back to full-screen fill |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
 | `RemoteServer.kt` | Phone remote HTTP server (in progress). Raw `ServerSocket`, one thread per connection, token check, calls back into `BrowserActivity` through `RemoteServer.Listener` |
 | `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used |
-| `page_script.js` | Four IIFEs: cosmetic filters and click-trap sweep (plus GPC), jump-mode engine (`window.__sp`), watch-mode video helpers (same object), auto-unmute |
+| `page_script.js` | Five IIFEs: cosmetic filters and click-trap sweep (plus GPC), jump-mode engine (`window.__sp`), watch-mode video helpers (same object), page zoom and full-screen fill (adds to `__sp`), auto-unmute |
 | `yt_clean.js` | YouTube-only ad removal |
 
 ## Native shell and injected JS
@@ -60,9 +61,11 @@ There is no `addJavascriptInterface`. All communication is Kotlin calling `evalu
 | `__sp.bars()` | `{top,bottom}` fixed bars present | one-time hint per host |
 | `__sp.clear()` | | leaving watch mode |
 | `__sp.media()` | `{has,playing,vertical}` for the largest visible video | `checkWatch()` |
-| `__sp.toggle()` / `seek(s)` / `feed(step)` / `fullscreen()` | state strings | watch mode and media keys |
+| `__sp.toggle()` / `seek(s)` / `feed(step)` / `fullscreen()` | state strings (`fullscreen()`: `on`, `off`, `fail` or `null`) | watch mode and media keys |
+| `__sp.zoom(pct)` | the level applied | `applyZoom` on page start, first paint and finish, and on every zoom change |
+| `__sp.fill()` / `unfill()` | `fill` or `null` / `off` | `enterFill` / `exitFill` (full-screen fallback) |
 
-`iw` is the page's `innerWidth` in CSS px. `showRingFor` scales the rect by `webView.width / iw`, offsets it by the WebView's position and clips it to the web area, then hands it to `CursorView.showRing`.
+`iw` is the page's `innerWidth` in CSS px (divided by `__sp.zoomFactor()`, which is 1 except on old Chromium versions that report unzoomed boxes under CSS zoom). `showRingFor` scales the rect by `webView.width / iw`, offsets it by the WebView's position and clips it to the web area, then hands it to `CursorView.showRing`.
 
 ### Polling
 
@@ -86,7 +89,7 @@ While the page is active, `pollRing` runs every 350 ms: it re-reads `__sp.rect()
 10. Jump mode: arrows call `jump(dir)`. The first auto-repeat of ▲/▼ (`repeatCount == 1`) jumps to the site's fixed top or bottom bar once per hold. OK taps the ring centre; with no ring it first picks a start element.
 11. Pointer mode: arrows press/release directions on `CursorView`; OK taps at the pointer.
 
-Back goes through `onBackPressed`: exit page fullscreen, leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close the shield panel, leave home Edit, close home, leave the toolbar, go back in history, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
+Back goes through `onBackPressed`: exit page fullscreen, leave fill mode (unless an overlay is open), leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close the shield panel, leave home Edit, close home, leave the toolbar, go back in history, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
 
 ### Clicking and scrolling
 
