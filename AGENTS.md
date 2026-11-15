@@ -50,7 +50,9 @@ app/src/main/
     Parental.kt           Pure: parental controls PIN hashing (PBKDF2-HMAC-SHA256, salted), wrong-PIN lockout, unlock window, blocked-site matching, SafeSearch URL rewriting
     PinPad.kt             Parental controls number pad overlay (3×4 keys, dots, auto-submit on the 4th digit, remote number keys)
     Prefs.kt              SharedPreferences wrapper: every user setting, favourites, recents, history, counters, update state
-    PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page
+    PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page, with its own D-pad overlay
+    PlayerBar.kt          The player's drawn progress bar (buffered, played, seek preview)
+    PlayerUi.kt           Pure: player seek steps and clamping, time labels, "Ends at", title fallback
     RemoteServer.kt       Phone remote: tiny LAN HTTP server with a pairing token (see docs/PHONE_REMOTE.md)
     RemoteInput.kt        Pure: phone remote request validation (keys, lengths, ranges, URL scheme, icon host)
   assets/
@@ -60,8 +62,9 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/drawable/ic_lock.xml, ic_backspace.xml   Parental controls icons (Settings sidebar, PIN pad ⌫)
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
+  res/layout/activity_player.xml    Native player overlay: title, progress bar, times, buttons
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates and Android 7–9 downloads)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest, ContinueWatchingTest, ParentalTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest, ContinueWatchingTest, ParentalTest, PlayerUiTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):
@@ -126,7 +129,7 @@ Debug builds do not set `FLAG_SECURE`, so screenshots work in private mode too.
 
 ## Coding conventions (as observed in the code)
 
-- Kotlin, plain `Activity` (no AppCompat, no Fragments, no Compose, no DI). Views come from one XML layout; panels such as Settings and the ⋮ menu are built in code.
+- Kotlin, plain `Activity` (no AppCompat, no Fragments, no Compose, no DI). Views come from one XML layout per activity; panels such as Settings and the ⋮ menu are built in code.
 - Small dependency set: `androidx.core`, `androidx.webkit`, `androidx.tvprovider` (TV home screen), Media3, ZXing core (QR code); tests add JUnit and `org.json` (the Android jar only has stubs of it). Adding a dependency needs a clear reason.
 - Keep pure logic in `HostRules`, `WebSearch`, `History` or `Updates` (no Android imports beyond `org.json`) so it can be unit-tested on the JVM.
 - Every user setting is a property on `Prefs` with a default in the getter. Settings save as they change; closing Settings reloads the page if `settingsDirty`.

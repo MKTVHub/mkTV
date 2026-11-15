@@ -1,0 +1,9 @@
+<!-- Native player pill buttons (subtitles, speed): same states as player_button. -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape android:shape="rectangle"><corners android:radius="24dp" /><solid android:color="#4DFFFFFF" /><stroke android:width="3dp" android:color="#FFFFFFFF" /></shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle"><corners android:radius="24dp" /><solid android:color="#29FFFFFF" /><stroke android:width="1dp" android:color="#1FFFFFFF" /></shape>
+    </item>
+</selector>
