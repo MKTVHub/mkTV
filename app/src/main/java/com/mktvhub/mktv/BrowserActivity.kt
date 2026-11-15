@@ -149,6 +149,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun setupWebView() {
         // Leftover private profile from a crash or force-stop: wipe it.
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }
+        // Service workers fetch outside the WebViewClient: a blocked site's worker (installed before it was blocked) gets nothing.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)) {
+            androidx.webkit.ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(object : androidx.webkit.ServiceWorkerClientCompat() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+                    if (parentalBlocks(request.url.host)) WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))) else null
+            })
+        }
         showTab(newTab(isPrivate = false))
     }
 
@@ -231,6 +239,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                     if (request.isForMainFrame) { countBlocked(blockedRedirects); showBlocked("Blocked link to an app ($scheme:)", null) }
                     return true
                 }
+                // Parental controls: shouldInterceptRequest isn't called again for the target of a redirect (youtu.be, short
+                // links, a search result's /url?q=), so stop it here too. As a fresh load the blocked address gets the notice.
+                if (parentalBlocks(url.host)) { if (request.isForMainFrame) view.loadUrl(url.toString()); return true }
                 // SafeSearch before anything can let the address through unchanged; loadUrl doesn't come back here.
                 if (request.isForMainFrame) safeSearchRewrite(url.toString())?.let { safe ->
                     view.settings.userAgentString = uaFor(safe)
@@ -2554,8 +2565,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 onOverlayChanged(focus)
             }
             // Back to what had focus (a Settings row, a menu item); the page or nothing: the usual overlay rules.
-            override fun hidden(previous: View?) =
-                onOverlayChanged(previous?.takeIf { it.isShown && it.isFocusable && !isInside(webContainer, it) })
+            override fun hidden(previous: View?) = onOverlayChanged(previous?.takeIf { it.isShown && it.isFocusable && !isInside(webContainer, it) }
+                // Settings re-rendered under the pad: its sidebar row rather than the toolbar behind the panel
+                ?: findViewById<ViewGroup>(R.id.settingsNav).findViewWithTag<View>("settab:$settingsTab")?.takeIf { it.isShown })
         })
     }
 
