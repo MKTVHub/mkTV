@@ -10,3 +10,6 @@ local.properties
 *.jks
 captures/
 .kotlin/
+
+# Claude Code agent worktrees
+.claude/worktrees/
