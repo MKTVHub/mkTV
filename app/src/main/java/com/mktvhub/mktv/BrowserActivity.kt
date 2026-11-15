@@ -903,14 +903,22 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     /** Shows what was blocked, with "Open anyway" when there is a URL to open ([newTab]: a pop-up, opened in a new tab). Any thread. */
     private fun showBlocked(message: String, url: String?, newTab: Boolean = false) = runOnUiThread {
-        showSnack(R.drawable.ic_shield_on, message, "Open anyway", action = url?.let { u -> { bypassOnce = u; if (newTab) openInNewTab(u, inPrivate) else load(u) } })
+        showSnack(R.drawable.ic_shield_on, message, "Open anyway", durationMs = 10_000,
+            action = url?.let { u -> { bypassOnce = u; if (newTab) openInNewTab(u, inPrivate) else load(u) } })
+        if (url != null) blockedShownAt = SystemClock.uptimeMillis()
     }
+
+    /** When a blocked notice with "Open anyway" appeared; the first ▼ soon after goes to its button (OK still opens). */
+    private var blockedShownAt = 0L
+    private fun blockedOfferFresh() = blockedShownAt > 0 && SystemClock.uptimeMillis() - blockedShownAt < 4_000 &&
+        snackbar.visibility == View.VISIBLE && findViewById<View>(R.id.snackAction).visibility == View.VISIBLE
 
     /** Bottom notice with an optional action button; if [reachable], ▼ at the bottom of a page (jump mode) reaches it. */
     private fun showSnack(icon: Int, message: String, actionLabel: String, reachable: Boolean = false,
                           actionIcon: Int = 0, durationMs: Long = 6_000, action: (() -> Unit)?) {
         snackOnAction = action
         snackReachable = reachable
+        blockedShownAt = 0L
         resumeOfferUrl = null // a newer notice replaces a resume offer
         findViewById<android.widget.ImageView>(R.id.snackIcon).setImageResource(icon)
         findViewById<TextView>(R.id.snackText).text = message
@@ -4095,6 +4103,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (isKeyboardVisible()) return super.dispatchKeyEvent(event)
         val down = event.action == KeyEvent.ACTION_DOWN
         val f = currentFocus
+        // "Open anyway" is hard to reach at the bottom of a long page: ▼ right after a block notice goes to it.
+        if (down && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && event.repeatCount == 0 && blockedOfferFresh() &&
+            !isInside(snackbar, f) && !overlayOpen()) {
+            blockedShownAt = 0L
+            findViewById<View>(R.id.snackAction).requestFocus()
+            snackbar.removeCallbacks(hideSnack); snackbar.postDelayed(hideSnack, 10_000)
+            return true
+        }
         // After the sleep timer let the screen turn off, any key keeps it on again.
         if (down && !root.keepScreenOn) root.keepScreenOn = true
         // Menu over the playback controls just closes them (one overlay at a time).

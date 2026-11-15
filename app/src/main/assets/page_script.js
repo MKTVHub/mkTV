@@ -1,8 +1,12 @@
 (function () {
   if (window.__tvbClean) return;
   window.__tvbClean = true;
-  // Global Privacy Control: tells sites not to sell/share data (honoured in some regions).
-  try { Object.defineProperty(navigator, 'globalPrivacyControl', { get: function () { return true; } }); } catch (e) {}
+  // Hands off human checks (Cloudflare Turnstile, hCaptcha, reCAPTCHA): they read a changed navigator
+  // or a removed element as a tampered browser and spin on "Verifying..." forever.
+  if (/(^|\.)(challenges\.cloudflare\.com|hcaptcha\.com|recaptcha\.net)$/.test(location.hostname) ||
+      /^\/recaptcha\//.test(location.pathname)) return;
+  // Global Privacy Control: tells sites not to sell/share data (honoured in some regions). Top page only.
+  if (window.top === window) try { Object.defineProperty(navigator, 'globalPrivacyControl', { get: function () { return true; } }); } catch (e) {}
 
   // Generic cosmetic filters for common ad containers.
   var css = [
