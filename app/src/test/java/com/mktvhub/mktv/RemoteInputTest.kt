@@ -67,4 +67,12 @@ class RemoteInputTest {
         assertTrue(t.getString("color").startsWith("#"))
         assertEquals("", RemoteInput.tile("x", "https://x.org", "x.org", hasIcon = false).getString("icon"))
     }
+
+    @Test fun deviceLabels() {
+        assertEquals("Pixel 8 Pro · Chrome", RemoteInput.deviceLabel("Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/AP1A) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36"))
+        assertEquals("Android phone · Chrome", RemoteInput.deviceLabel("Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Mobile Safari/537.36"))
+        assertEquals("iPhone · Safari", RemoteInput.deviceLabel("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"))
+        assertEquals("Mac · Firefox", RemoteInput.deviceLabel("Mozilla/5.0 (Macintosh; Intel Mac OS X 14.0; rv:120.0) Gecko/20100101 Firefox/120.0"))
+        assertEquals("Device", RemoteInput.deviceLabel(null))
+    }
 }

@@ -2748,12 +2748,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             // Second press confirms: it disconnects every paired phone.
             if (newCode.text == "New code") newCode.text = "Press again to unpair all" else unpairPhones()
         }
-        // Only these buttons in the panel: keep ▲▼◀▶ among them instead of escaping to the Home screen behind.
-        val buttons = listOf(findViewById<View>(R.id.remoteHelpBtn), newCode, findViewById<View>(R.id.remoteWifi))
-        buttons.forEachIndexed { i, b ->
-            b.nextFocusUpId = b.id; b.nextFocusDownId = b.id
-            b.nextFocusLeftId = buttons[maxOf(i - 1, 0)].id; b.nextFocusRightId = buttons[minOf(i + 1, buttons.size - 1)].id
+        remoteTab = "connect"
+        listOf(R.id.remoteTabConnect to "connect", R.id.remoteTabDevices to "devices").forEach { (id, tab) ->
+            findViewById<View>(id).apply {
+                setOnClickListener { showRemoteTab(tab) }
+                setOnFocusChangeListener { _, has -> if (has && remoteTab != tab) showRemoteTab(tab) }
+            }
         }
+        styleRemoteTabs()
+        wireRemoteFocus()
         remotePanel.visibility = View.VISIBLE
         onOverlayChanged(findViewById(R.id.remoteHelpBtn))
     }
@@ -2791,11 +2794,109 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     /** Help swaps the steps for the fixes people actually need; Help again (or Back) shows the steps. */
     private fun toggleRemoteHelp() {
+        if (remoteTab != "connect") { remoteTab = "connect"; remoteHelpShown = false; styleRemoteTabs() }
         remoteHelpShown = !remoteHelpShown
         findViewById<TextView>(R.id.remoteHelpBtn).text = if (remoteHelpShown) "Steps" else "Help"
         findViewById<TextView>(R.id.remoteTitle).text = if (remoteHelpShown) "Phone can't open it?" else "Phone remote"
         findViewById<View>(R.id.remoteUrl).visibility = if (remoteHelpShown) View.GONE else View.VISIBLE // help lists it
         if (remoteHelpShown) renderRemoteHelp() else renderRemoteSteps()
+        wireRemoteFocus()
+    }
+
+    /** "connect" (QR steps / help) or "devices" (who is using the remote). */
+    private var remoteTab = "connect"
+
+    private fun showRemoteTab(tab: String) {
+        remoteTab = tab
+        remoteHelpShown = false
+        findViewById<TextView>(R.id.remoteHelpBtn).text = "Help"
+        findViewById<TextView>(R.id.remoteTitle).text = "Phone remote"
+        findViewById<View>(R.id.remoteUrl).visibility = if (tab == "connect") View.VISIBLE else View.GONE
+        if (tab == "connect") renderRemoteSteps() else renderRemoteDevices()
+        styleRemoteTabs()
+        wireRemoteFocus()
+    }
+
+    private fun styleRemoteTabs() {
+        val n = remoteServer.devices().size
+        listOf(R.id.remoteTabConnect to "connect", R.id.remoteTabDevices to "devices").forEach { (id, tab) ->
+            findViewById<TextView>(id).apply {
+                val on = remoteTab == tab
+                if (tab == "devices") text = if (n > 0) "Devices ($n)" else "Devices"
+                setBackgroundResource(if (on) R.drawable.seg_on else R.drawable.seg_off)
+                setTextColor(if (on) android.graphics.Color.WHITE else 0xFFD1D5DB.toInt())
+                setTypeface(null, if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            }
+        }
+    }
+
+    /** Devices tab: each phone (or computer) using the remote with the current code, newest activity first. */
+    private fun renderRemoteDevices() {
+        val box = findViewById<LinearLayout>(R.id.remoteSteps)
+        box.removeAllViews()
+        findViewById<TextView>(R.id.remoteWarn).visibility = View.GONE
+        val list = remoteServer.devices()
+        if (list.isEmpty()) {
+            box.addView(textBlock("No phones connected", "Scan the code on the Connect tab with a phone on the same Wi-Fi."))
+            return
+        }
+        val now = System.currentTimeMillis()
+        list.forEachIndexed { i, d ->
+            box.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                setPadding(0, if (i == 0) 0 else dp(12), 0, 0)
+                addView(android.widget.ImageView(context).apply {
+                    setImageResource(R.drawable.ic_phone)
+                    imageTintList = android.content.res.ColorStateList.valueOf(0xFF818CF8.toInt())
+                }, LinearLayout.LayoutParams(dp(28), dp(28)))
+                val ago = now - d.lastSeen
+                val seen = when {
+                    ago < 60_000 -> "active now"
+                    ago < 3_600_000 -> "${ago / 60_000} min ago"
+                    else -> android.text.format.DateUtils.getRelativeTimeSpanString(d.lastSeen).toString()
+                }
+                addView(textBlock(d.label, "${d.address} · $seen").apply { setPadding(dp(14), 0, dp(12), 0) },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(context).apply {
+                    text = "Disconnect"
+                    tag = "remotedev"
+                    id = View.generateViewId()
+                    gravity = android.view.Gravity.CENTER
+                    setTextColor(0xFFFCA5A5.toInt()); textSize = 14f
+                    setBackgroundResource(R.drawable.btn_danger)
+                    setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_close, 0, 0, 0)
+                    compoundDrawablePadding = dp(8)
+                    compoundDrawableTintList = textColors
+                    setPadding(dp(14), 0, dp(14), 0)
+                    isClickable = true; isFocusable = true
+                    setOnClickListener {
+                        remoteServer.disconnect(d.address)
+                        note("Disconnected ${d.label}. It can connect again after a New code.")
+                        renderRemoteDevices(); styleRemoteTabs(); wireRemoteFocus()
+                    }
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
+            })
+        }
+    }
+
+    /** Keep ▲▼◀▶ inside the panel: tabs on top, Disconnect buttons in the middle, the button row at the bottom. */
+    private fun wireRemoteFocus() {
+        val tabs = listOf(findViewById<View>(R.id.remoteTabConnect), findViewById<View>(R.id.remoteTabDevices))
+        val bottom = listOf(findViewById<View>(R.id.remoteHelpBtn), findViewById<View>(R.id.remoteNewCode), findViewById<View>(R.id.remoteWifi))
+        val middle = ArrayList<View>().also { findViewById<View>(R.id.remoteSteps).findViewsWithText(it, "Disconnect", View.FIND_VIEWS_WITH_TEXT) }
+        val tab = if (remoteTab == "connect") tabs[0] else tabs[1]
+        fun row(views: List<View>) = views.forEachIndexed { i, v ->
+            v.nextFocusLeftId = views[maxOf(i - 1, 0)].id; v.nextFocusRightId = views[minOf(i + 1, views.size - 1)].id
+        }
+        row(tabs); row(bottom)
+        tabs.forEach { it.nextFocusUpId = it.id; it.nextFocusDownId = (middle.firstOrNull() ?: bottom[0]).id }
+        middle.forEachIndexed { i, v ->
+            v.nextFocusLeftId = v.id; v.nextFocusRightId = v.id
+            v.nextFocusUpId = if (i == 0) tab.id else middle[i - 1].id
+            v.nextFocusDownId = if (i == middle.size - 1) bottom[0].id else middle[i + 1].id
+        }
+        bottom.forEach { it.nextFocusDownId = it.id; it.nextFocusUpId = (middle.lastOrNull() ?: tab).id }
     }
 
     private fun renderRemoteHelp() {
@@ -2931,11 +3032,27 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (granted) detectWifi(ask = true) else note("No problem: type the network name instead")
     }
 
+    /**
+     * QR code with the mkTV logo in the middle. The highest error correction (H, ~30% recoverable)
+     * lets phones read it even though the logo covers about 5% of the code.
+     */
     private fun qrBitmap(text: String, size: Int): Bitmap {
         val m = com.google.zxing.qrcode.QRCodeWriter().encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size,
-            mapOf(com.google.zxing.EncodeHintType.MARGIN to 1))
+            mapOf(com.google.zxing.EncodeHintType.MARGIN to 1,
+                com.google.zxing.EncodeHintType.ERROR_CORRECTION to com.google.zxing.qrcode.decoder.ErrorCorrectionLevel.H))
         val px = IntArray(size * size) { i -> if (m.get(i % size, i / size)) android.graphics.Color.BLACK else android.graphics.Color.WHITE }
-        return Bitmap.createBitmap(px, size, size, Bitmap.Config.ARGB_8888)
+        val bmp = Bitmap.createBitmap(px, size, size, Bitmap.Config.ARGB_8888).copy(Bitmap.Config.ARGB_8888, true) // mutable, for the logo
+        val c = android.graphics.Canvas(bmp)
+        val logo = size * 18 / 100
+        val pad = logo / 8
+        val l = (size - logo) / 2f
+        c.drawRoundRect(l - pad, l - pad, l + logo + pad, l + logo + pad, pad * 1.5f, pad * 1.5f,
+            android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE })
+        androidx.core.content.ContextCompat.getDrawable(this, R.mipmap.ic_launcher)!!.mutate().apply {
+            setBounds(l.toInt(), l.toInt(), l.toInt() + logo, l.toInt() + logo)
+            draw(c)
+        }
+        return bmp
     }
 
     private val heldKeys = HashMap<Int, Runnable>()
@@ -3100,7 +3217,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     override fun onPhoneConnected(address: String) = runOnUiThread {
         val pairing = remotePanel.visibility == View.VISIBLE
-        closePhoneRemote()
+        // On the Devices tab, show the newcomer in the list instead of closing the panel.
+        if (pairing && remoteTab == "devices") { renderRemoteDevices(); styleRemoteTabs(); wireRemoteFocus() } else closePhoneRemote()
         // Every new device is announced, so a phone you don't know about can't drive the TV unnoticed.
         showSnack(R.drawable.ic_phone, if (pairing) "Phone remote connected" else "New phone connected · $address", "Unpair all", reachable = !pairing) { unpairPhones() }
     }

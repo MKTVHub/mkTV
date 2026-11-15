@@ -17,6 +17,35 @@ object RemoteInput {
     const val MAX_SEEK = 86_400.0 * 2
 
     fun key(k: String?): String? = k?.takeIf { it in KEYS }
+
+    /** "Pixel 8 · Chrome", "iPhone · Safari", "Mac · Firefox": a friendly name for a connected device from its User-Agent. */
+    fun deviceLabel(ua: String?): String {
+        val u = ua.orEmpty()
+        val model = Regex("""Android [\d.]+; ([^;)]+)""").find(u)?.groupValues?.get(1)
+            ?.substringBefore(" Build")?.trim()?.filter { it.isLetterOrDigit() || it in " -_+." }
+            ?.takeIf { it.length in 2..40 && it != "K" }
+        val device = when {
+            "iPhone" in u -> "iPhone"
+            "iPad" in u -> "iPad"
+            "Android" in u -> model ?: if ("Mobile" in u) "Android phone" else "Android tablet"
+            "CrOS" in u -> "Chromebook"
+            "Macintosh" in u -> "Mac"
+            "Windows" in u -> "Windows PC"
+            "Linux" in u -> "Linux PC"
+            else -> "Device"
+        }
+        val browser = when {
+            "EdgA/" in u || "EdgiOS" in u || "Edg/" in u -> "Edge"
+            "SamsungBrowser" in u -> "Samsung Internet"
+            "Firefox/" in u || "FxiOS" in u -> "Firefox"
+            "OPR/" in u -> "Opera"
+            "CriOS" in u || "Chrome/" in u -> "Chrome"
+            "Safari/" in u -> "Safari"
+            "curl/" in u -> "curl"
+            else -> null
+        }
+        return listOfNotNull(device, browser).joinToString(" · ")
+    }
     fun action(a: String?): String = a?.takeIf { it in ACTIONS } ?: "press"
 
     fun text(t: String?): String = (t ?: "").take(MAX_TEXT)

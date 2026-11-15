@@ -32,7 +32,7 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         fun home(): JSONObject
         /** The TV's saved favicon (PNG) for [host], already validated by [RemoteInput.iconHost]. */
         fun icon(host: String): ByteArray?
-        /** First request from a phone at [address] since the code was last made; once per device. */
+        /** First request from a device at [address] since the code was last made; once per device. */
         fun onPhoneConnected(address: String)
     }
 
@@ -45,13 +45,27 @@ class RemoteServer(private val context: Context, private val listener: Listener,
     /** Unpairs every phone: old links and bookmarks stop working; the next phone scans the new QR code. */
     fun resetToken() {
         token = newToken()
-        seen.clear()
+        devices.clear()
+        blocked.clear()
     }
     var port = PORT
         private set
     private var server: ServerSocket? = null
-    /** Phones (by address) already announced on the TV for the current code. */
-    private val seen = java.util.Collections.synchronizedSet(HashSet<String>())
+    /** A device that used the remote with the current code (one per network address). */
+    class Device(val address: String, @Volatile var label: String, @Volatile var lastSeen: Long)
+
+    private val devices = java.util.concurrent.ConcurrentHashMap<String, Device>()
+    /** Disconnected addresses: refused until the next New code. */
+    private val blocked = java.util.Collections.synchronizedSet(HashSet<String>())
+
+    /** Most recently active first. */
+    fun devices(): List<Device> = devices.values.sortedByDescending { it.lastSeen }
+
+    /** Every phone shares the one code, so a single phone is shut out by its address until a New code is made. */
+    fun disconnect(address: String) {
+        blocked += address
+        devices.remove(address)
+    }
     private val page by lazy { context.assets.open("remote.html").bufferedReader().use { it.readText() } }
 
     val running get() = server?.isClosed == false
@@ -125,7 +139,8 @@ class RemoteServer(private val context: Context, private val listener: Listener,
         val length = headers["content-length"]?.toIntOrNull()?.coerceAtMost(64 * 1024) ?: 0
         val body = if (length > 0) ByteArray(length).also { var read = 0; while (read < length) { val n = input.read(it, read, length - read); if (n < 0) break; read += n } }.toString(Charsets.UTF_8) else ""
 
-        val authed = sameToken(query["t"]) || sameToken(headers["x-token"])
+        val ip = sock.inetAddress?.hostAddress
+        val authed = ip !in blocked && (sameToken(query["t"]) || sameToken(headers["x-token"]))
         val out = sock.getOutputStream()
         fun respond(code: Int, type: String, bytes: ByteArray) {
             val status = when (code) { 200 -> "OK"; 400 -> "Bad Request"; 403 -> "Forbidden"; 404 -> "Not Found"; 415 -> "Unsupported Media Type"; else -> "Error" }
@@ -140,7 +155,12 @@ class RemoteServer(private val context: Context, private val listener: Listener,
             respond(403, "text/html", "<h2 style='font-family:sans-serif'>Scan the QR code shown on your TV (⋮ → Phone remote).</h2>")
             return
         }
-        sock.inetAddress?.hostAddress?.let { if (seen.add(it)) listener.onPhoneConnected(it) }
+        if (ip != null) {
+            val label = RemoteInput.deviceLabel(headers["user-agent"])
+            val now = System.currentTimeMillis()
+            val known = devices.putIfAbsent(ip, Device(ip, label, now))
+            if (known == null) listener.onPhoneConnected(ip) else { known.lastSeen = now; known.label = label }
+        }
         // JSON-only POSTs: a cross-site HTML form can't send this content type without a CORS preflight.
         if (method == "POST" && headers["content-type"]?.substringBefore(';')?.trim()?.lowercase() != "application/json") {
             respond(415, "application/json", "{\"ok\":false}")
