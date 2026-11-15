@@ -47,6 +47,8 @@ app/src/main/
     DownloadCenter.kt     Downloads: confirm prompt, DownloadManager, data:/blob: saving, status polling, Open/Delete, Downloads panel rows
     ContinueWatching.kt   Pure: Continue watching rules (what to save, finished, resume offer), labels, JSON; HomeSections.merge (Home section order)
     TvHome.kt             Android TV home screen: Continue watching in Play Next (Watch Next) and a mkTV channel, via androidx.tvprovider, off the main thread
+    Parental.kt           Pure: parental controls PIN hashing (PBKDF2-HMAC-SHA256, salted), wrong-PIN lockout, unlock window, blocked-site matching, SafeSearch URL rewriting
+    PinPad.kt             Parental controls number pad overlay (3×4 keys, dots, auto-submit on the 4th digit, remote number keys)
     Prefs.kt              SharedPreferences wrapper: every user setting, favourites, recents, history, counters, update state
     PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page
     RemoteServer.kt       Phone remote: tiny LAN HTTP server with a pairing token (see docs/PHONE_REMOTE.md)
@@ -56,9 +58,10 @@ app/src/main/
     yt_clean.js           Injected on YouTube origins only: JSON ad pruning, ad-slot CSS, ad skip
     adhosts.txt           Small bundled ad/pop-up network host list
     remote.html           Self-contained phone remote page served by RemoteServer
+  res/drawable/ic_lock.xml, ic_backspace.xml   Parental controls icons (Settings sidebar, PIN pad ⌫)
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates and Android 7–9 downloads)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest, ContinueWatchingTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, PlaybackSpeedTest, BookmarksTest, TabsTest, DownloadsTest, ContinueWatchingTest, ParentalTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):
@@ -70,7 +73,7 @@ app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterLists
 | `// ---- Tabs` | `showTab`, `discardTab`, `closeTab`, `openInNewTab`, `onTrimMemory` (the switcher is `showTabsMenu` in the ⋮ menu) |
 | `// region Toolbar` | Toolbar buttons, `submitAddress`, address-bar suggestions, voice search, shield badge and panel, per-site pause, blocked snackbar, stream button and picker, `playNative` |
 | `// region Shortcuts` | Home screen: Continue watching (and its sampling, resume notice), Popular, Favourites, Recently visited, tiles, favicons; the History page; in-app updates (check, home card, download, install) |
-| `// region Settings` | Settings screen built in code (`section`, `toggleRow`, `actionRow`, `fieldRow`, `segmented`) |
+| `// region Settings` | Settings screen built in code (`section`, `toggleRow`, `actionRow`, `fieldRow`, `segmented`); `// ---- Parental controls` (`pinPad`, `needsPin` / `askPin` / `guarded`, `parentalBlocks`, `parentalUrl`, `renderParental`) |
 | `// region Remote control → cursor` | Phone remote panel and `RemoteServer.Listener` callbacks (`onKey`, `onText`, `onOpen`, `state`), ⋮ menu, clear-data submenu, focus/overlay rules, `dispatchKeyEvent`, YouTube TV passthrough, jump mode, pointer touch/scroll synthesis, auto-hiding bar, watch mode, dock, playback controls and sleep timer, `onBackPressed` |
 | `// region Helpers` | `normalizeInput`, keyboard, system bars, toasts, lifecycle |
 | `companion object` | `POPULAR` list, user-agent strings, request codes |
@@ -86,7 +89,7 @@ mkTV is a **native Android shell around a system WebView, plus a JavaScript laye
 - They talk one way: Kotlin calls `webView.evaluateJavascript("window.__sp.move('down')")` and parses the JSON string that comes back. There is no `addJavascriptInterface` bridge. Keep it that way: pages cannot call into the app.
 - The jump-mode highlight is **drawn natively** by `CursorView` from the rectangle the page reports, scaled from CSS px to screen px in `showRingFor`. Clicks are **synthesized touch events** at the ring centre (`tapAt` / `touchAt`), so holding OK is a long-press.
 
-**Key routing order** in `BrowserActivity.dispatchKeyEvent` (first match wins):
+**Key routing order** in `BrowserActivity.dispatchKeyEvent` (first match wins). Before all of these, while the parental PIN pad is open, it takes the number keys and Delete, and swallows Menu and Search (`PinPad.handleKey`); arrows and OK move between its keys.
 
 1. Soft keyboard visible: normal Android handling.
 2. Menu / Bookmark opens the ⋮ menu; Search starts voice search (from anywhere).
@@ -100,9 +103,9 @@ mkTV is a **native Android shell around a system WebView, plus a JavaScript laye
 10. Jump mode: arrows call `jump()`; a held ▲/▼ (first repeat) jumps to the site's fixed bar; OK taps the ring.
 11. Pointer mode: arrows drive `CursorView`; OK taps at the pointer.
 
-Back is handled separately in `onBackPressed` (playback controls panel, fullscreen, fill mode, suggestion list, phone remote panel, menu, watch mode, settings, History page, Downloads page, shield panel, home edit, Favourites folder, home, toolbar, bottom notice, back in page history, close the tab if other tabs are open, then "press again to exit"). On YouTube TV, `handleSiteRemote` sends a short Back to the page as Escape and a long Back opens the mkTV home screen.
+Back is handled separately in `onBackPressed` (the parental PIN pad first, then the playback controls panel, fullscreen, fill mode, suggestion list, phone remote panel, menu, watch mode, settings, History page, Downloads page, shield panel, home edit, Favourites folder, home, toolbar, bottom notice, back in page history, close the tab if other tabs are open, then "press again to exit"). On YouTube TV, `handleSiteRemote` sends a short Back to the page as Escape and a long Back opens the mkTV home screen.
 
-**Overlays vs page focus.** The home screen, settings, History page, Downloads page, shield panel, ⋮ menu, phone remote panel, address-bar suggestion list and watch mode's playback controls panel are native views using normal Android focus. When any is open (`overlayOpen()`), `webContainer` blocks descendant focus so the page cannot steal it, the top bar stays visible (except over the playback controls, which sit on the video), and the cursor/ring is hidden. `onOverlayChanged()` is the single place that flips this; call it whenever you open or close an overlay.
+**Overlays vs page focus.** The home screen, settings, History page, Downloads page, shield panel, ⋮ menu, phone remote panel, parental PIN pad, address-bar suggestion list and watch mode's playback controls panel are native views using normal Android focus. When any is open (`overlayOpen()`), `webContainer` blocks descendant focus so the page cannot steal it, the top bar stays visible (except over the playback controls, which sit on the video), and the cursor/ring is hidden. `onOverlayChanged()` is the single place that flips this; call it whenever you open or close an overlay.
 
 ## Build, test, install
 

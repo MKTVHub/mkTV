@@ -41,6 +41,8 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
         /** A download started in this session has finished. */
         fun downloaded(e: Downloads.Entry)
         fun panelOpen(): Boolean
+        /** Runs [install] for a downloaded APK, or first asks for something such as the parental PIN. */
+        fun beforeInstall(install: () -> Unit) = install()
     }
 
     private enum class State { RUNNING, DONE, FAILED, GONE }
@@ -388,7 +390,7 @@ class DownloadCenter(private val activity: Activity, private val prefs: Prefs, p
         val uri = uriFor(e) ?: return host.note("${e.name} is no longer on the TV.")
         val mime = Downloads.mimeFor(e.name, e.mime)
         when (Downloads.kindOf(e.name, mime)) {
-            Downloads.Kind.APK -> install(uri)
+            Downloads.Kind.APK -> host.beforeInstall { install(uri) }
             Downloads.Kind.VIDEO, Downloads.Kind.AUDIO ->
                 if (chooser) view(uri, mime, chooser = true)
                 else activity.startActivity(Intent(activity, PlayerActivity::class.java)

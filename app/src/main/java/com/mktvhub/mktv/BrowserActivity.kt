@@ -77,6 +77,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     @Volatile private var protectionOn = true
     /** A blocked pop-up/redirect URL the user chose to open: let it through once. */
     @Volatile private var bypassOnce: String? = null
+    /** Parental controls' blocked sites (copy of Prefs.blockedSites), read on WebView's network threads. */
+    @Volatile private var parentalSites: Set<String> = emptySet()
 
     /** HLS/DASH manifests seen on the current page. */
     private val streams = CopyOnWriteArrayList<DetectedStream>()
@@ -94,6 +96,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         setContentView(R.layout.activity_browser)
         prefs = Prefs(this)
         blocker = AdBlocker(this, prefs) // lists load in onResume
+        parentalSites = prefs.blockedSites
 
         root = findViewById(R.id.root)
         toolbar = findViewById(R.id.toolbar)
@@ -146,6 +149,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun setupWebView() {
         // Leftover private profile from a crash or force-stop: wipe it.
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }
+        // Service workers fetch outside the WebViewClient: a blocked site's worker (installed before it was blocked) gets nothing.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_BASIC_USAGE) &&
+            WebViewFeature.isFeatureSupported(WebViewFeature.SERVICE_WORKER_SHOULD_INTERCEPT_REQUEST)) {
+            androidx.webkit.ServiceWorkerControllerCompat.getInstance().setServiceWorkerClient(object : androidx.webkit.ServiceWorkerClientCompat() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? =
+                    if (parentalBlocks(request.url.host)) WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0))) else null
+            })
+        }
         showTab(newTab(isPrivate = false))
     }
 
@@ -200,6 +211,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         wv.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val url = request.url
+                // Parental controls first: no ad-block switch, shield pause, allowlist or "Open anyway" gets past it.
+                // Every page load passes here (typed, tiles, links, redirects, the phone), so the page is swapped for a calm notice.
+                if (parentalBlocks(url.host)) {
+                    return if (request.isForMainFrame) WebResourceResponse("text/html", "utf-8", 200, "OK", mapOf("Cache-Control" to "no-store"),
+                        ByteArrayInputStream(Parental.blockedPage(url.host).toByteArray()))
+                    else WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+                }
                 if (protectionOn && !request.isForMainFrame && blocker.isBlocked(url.host)) {
                     if (tab.active) countBlocked(blockedAds) // counters and streams belong to the tab on screen
                     return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
@@ -219,6 +237,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 val scheme = url.scheme?.lowercase()
                 if (scheme !in setOf("http", "https", "about", "data", "blob", "javascript")) {
                     if (request.isForMainFrame) { countBlocked(blockedRedirects); showBlocked("Blocked link to an app ($scheme:)", null) }
+                    return true
+                }
+                // Parental controls: shouldInterceptRequest isn't called again for the target of a redirect (youtu.be, short
+                // links, a search result's /url?q=), so stop it here too. As a fresh load the blocked address gets the notice.
+                if (parentalBlocks(url.host)) { if (request.isForMainFrame) view.loadUrl(url.toString()); return true }
+                // SafeSearch before anything can let the address through unchanged; loadUrl doesn't come back here.
+                if (request.isForMainFrame) safeSearchRewrite(url.toString())?.let { safe ->
+                    view.settings.userAgentString = uaFor(safe)
+                    view.loadUrl(if (prefs.stripTracking) HostRules.stripTracking(safe) else safe)
                     return true
                 }
                 if (bypassOnce == url.toString()) { bypassOnce = null; return false }
@@ -298,7 +325,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             val cookie = if (url.startsWith("http") && (!isPrivate || multiProfile)) runCatching { cookieManagerFor(isPrivate).getCookie(url) }.getOrNull() else null
             // A file typed into the address bar leaves no page behind: show Home rather than a blank screen.
             if (wv === webView && wv.copyBackForwardList().size == 0) openShortcuts()
-            downloads.offer(wv, isPrivate, url, ua, disposition, mime, length, cookie)
+            guarded(Parental.GUARD_DOWNLOADS, "Enter the PIN to download") { downloads.offer(wv, isPrivate, url, ua, disposition, mime, length, cookie) }
         }
 
         wv.webChromeClient = object : WebChromeClient() {
@@ -360,7 +387,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             override fun onReceivedTitle(view: WebView, title: String?) {
                 // Many pages set their real title after onPageFinished; keep the history entry's title current.
                 val url = view.url ?: return
-                if (view === webView && !inPrivate && title != null && !title.startsWith("http")) {
+                if (view === webView && !inPrivate && title != null && !title.startsWith("http") && !parentalBlocks(Uri.parse(url).host)) {
                     val list = prefs.history
                     val updated = History.retitle(list, url, title)
                     if (updated !== list) prefs.history = updated
@@ -403,8 +430,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         else -> null
     }
 
-    /** All app-initiated navigation goes through here so the right user agent is set first. */
-    private fun load(url: String) {
+    /** All app-initiated navigation goes through here so the right user agent (and SafeSearch) is set first. */
+    private fun load(address: String) {
+        val url = parentalUrl(address)
         val ua = uaFor(url)
         if (webView.settings.userAgentString != (ua ?: WebSettings.getDefaultUserAgent(this))) webView.settings.userAgentString = ua
         webView.loadUrl(url)
@@ -420,6 +448,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun enterPrivate() {
         if (inPrivate) return
+        if (needsPin(Parental.GUARD_PRIVATE)) { askPin("Enter the PIN to open private browsing") { enterPrivate() }; return }
         // Without profile support, the only way to keep this session's cookies out of the normal jar is to refuse them.
         if (!multiProfile) CookieManager.getInstance().setAcceptCookie(false)
         showTab(newTab(isPrivate = true))
@@ -1555,6 +1584,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun rememberRecent(title: String?, url: String) {
         if (inPrivate) return
         if (url.isBlank() || url.startsWith("about:") || url.startsWith("data:")) return
+        if (parentalBlocks(Uri.parse(url).host)) return // only the "blocked" notice was shown
         val site = HostRules.siteOf(Uri.parse(url).host) ?: return
         val entry = (title?.takeIf { it.isNotBlank() } ?: prettyHost(url)) to url
         prefs.recent = (listOf(entry) + prefs.recent.filterNot { HostRules.siteOf(Uri.parse(it.second).host) == site }).take(12)
@@ -2003,6 +2033,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         DownloadCenter(this, prefs, downloadsPanel, object : DownloadCenter.Host {
             override fun note(msg: String) = this@BrowserActivity.note(msg)
             override fun panelOpen() = downloadsPanel.visibility == View.VISIBLE
+            override fun beforeInstall(install: () -> Unit) = guarded(Parental.GUARD_DOWNLOADS, "Enter the PIN to install an app", action = install)
             override fun downloaded(e: Downloads.Entry) {
                 if (downloadsPanel.visibility != View.VISIBLE) showSnack(R.drawable.ic_download, "Downloaded ${e.name}", "Open", reachable = true) { downloads.open(e) }
             }
@@ -2191,6 +2222,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun appIcon(size: Int) = androidx.core.content.ContextCompat.getDrawable(this, R.mipmap.ic_launcher)!!.mutate().apply { setBounds(0, 0, dp(size), dp(size)) }
 
     private fun showSettings() {
+        if (needsPin(Parental.GUARD_SETTINGS)) { askPin("Enter the PIN to open Settings") { showSettings() }; return }
         menuScroll.visibility = View.GONE
         shieldPanel.visibility = View.GONE
         historyPanel.visibility = View.GONE
@@ -2283,7 +2315,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (settingsDirty) {
             protectionOn = isProtected(pageHost)
             updateShield()
-            if (hasPage()) webView.reload()
+            // A search page loads again with SafeSearch if it was just turned on; a newly blocked site shows the notice.
+            val safe = webView.url?.let { parentalUrl(it) }
+            if (hasPage()) { if (safe != null && safe != webView.url) load(safe) else webView.reload() }
+            tabs.forEach { t -> if (t !== activeTab && parentalBlocks(t.host)) t.webView?.reload() }
         }
         // Opening Settings hid Home; with no page behind, go back to Home rather than a blank screen.
         if (!hasPage() && prefs.startWithShortcuts) openShortcuts()
@@ -2401,14 +2436,16 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             })
         }
 
+        section(c, "Parental controls") { card -> renderParental(card) }
+
         section(c, "Blocklists") { card -> renderFilterLists(card) }
 
         section(c, "Phone remote") { card ->
             card.addView(toggleRow("Phone remote", "Control mkTV from a phone browser on the same Wi-Fi. Turns on when you open ⋮ → Phone remote; only runs while mkTV is on screen.", prefs.remoteEnabled) {
-                setRemoteEnabled(it)
+                setRemoteEnabled(it, onCancel = ::renderSettings) // PIN cancelled: the switch goes back to off
             })
-            card.addView(actionRow("Unpair all phones", "Makes a new pairing code. Phones that had the remote must scan the new QR code.", "New code") { btn ->
-                unpairPhones(); btn.text = "Done ✓"
+            card.addView(actionRow("Unpair all phones", "Makes a new pairing code. Phones that had the remote must scan the new QR code.", "New code", icon = R.drawable.ic_refresh) { btn ->
+                unpairPhones { btn.text = "Done ✓" }
             })
             card.addView(subheading("Anyone with the code can control mkTV on this network. Use it on your home Wi-Fi, not guest or public networks. mkTV shows a notice whenever a new phone connects."))
         }
@@ -2547,6 +2584,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             isClickable = true
             isFocusable = true
             tag = "btn:$title"
+            if (icon != 0) compoundDrawableTintList = textColors
         }
         btn.setOnClickListener { onClick(btn) }
         return rowContainer().apply {
@@ -2755,6 +2793,144 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
+    // ---- Parental controls (logic in Parental, the number pad in PinPad) ----
+
+    private val pinPad by lazy {
+        PinPad(this, root, prefs, object : PinPad.Host {
+            override fun shown(focus: View) {
+                (currentFocus as? EditText)?.let { hideKeyboard(it) }
+                onOverlayChanged(focus)
+            }
+            // Back to what had focus (a Settings row, a menu item); the page or nothing: the usual overlay rules.
+            override fun hidden(previous: View?) = onOverlayChanged(previous?.takeIf { it.isShown && it.isFocusable && !isInside(webContainer, it) }
+                // Settings re-rendered under the pad: its sidebar row rather than the toolbar behind the panel
+                ?: findViewById<ViewGroup>(R.id.settingsNav).findViewWithTag<View>("settab:$settingsTab")?.takeIf { it.isShown })
+        })
+    }
+
+    /** elapsedRealtime of the last correct PIN; 0 = locked. Cleared when mkTV goes to the background. */
+    private var unlockedAt = 0L
+    private fun pinSet() = prefs.pinRecord != null
+    private fun unlocked() = Parental.stillUnlocked(unlockedAt, SystemClock.elapsedRealtime())
+    /** True if [guard] is protected by the PIN and it wasn't entered in the last few minutes. */
+    private fun needsPin(guard: String) = pinSet() && guard in prefs.pinGuards && !unlocked()
+
+    /** Asks for the PIN (even if unlocked), then keeps mkTV unlocked for a few minutes and runs [action]. */
+    private fun askPin(title: String, onCancel: () -> Unit = {}, action: () -> Unit) =
+        pinPad.verify(title, onCancel) { unlockedAt = SystemClock.elapsedRealtime(); action() }
+
+    /** Runs [action] now, or after the PIN if [guard] is protected. */
+    private fun guarded(guard: String, title: String, onCancel: () -> Unit = {}, action: () -> Unit) {
+        if (needsPin(guard)) askPin(title, onCancel, action) else action()
+    }
+
+    /** Any thread. */
+    private fun parentalBlocks(host: String?) = Parental.isBlocked(host, parentalSites)
+
+    private fun parentalUrl(url: String) = if (prefs.safeSearch) Parental.safeSearch(url) else url
+
+    private var lastSafeRewrite: String? = null
+    private var lastSafeRewriteAt = 0L
+
+    /** The SafeSearch address for a page navigation, or null. Not the same rewrite twice in 2 s, in case a site redirects it away. */
+    private fun safeSearchRewrite(url: String): String? {
+        val safe = parentalUrl(url).takeIf { it != url } ?: return null
+        val now = SystemClock.uptimeMillis()
+        if (safe == lastSafeRewrite && now - lastSafeRewriteAt < 2000) return null
+        lastSafeRewrite = safe; lastSafeRewriteAt = now
+        return safe
+    }
+
+    private fun setBlockedSites(v: Set<String>) { prefs.blockedSites = v; parentalSites = v; settingsDirty = true }
+
+    private val ADD_BLOCK = "Block a site"
+    private val FORGOT_PIN = "Forgot the PIN? In the TV's own settings, open Apps → mkTV → Clear data (or Clear storage). " +
+        "That removes the PIN, and also deletes your Favourites, history and every other mkTV setting."
+
+    private fun guardName(id: String) = when (id) {
+        Parental.GUARD_SETTINGS -> "Settings"
+        Parental.GUARD_PRIVATE -> "private browsing"
+        Parental.GUARD_DOWNLOADS -> "downloads"
+        else -> "the phone remote"
+    }
+
+    private fun renderParental(card: LinearLayout) {
+        val pin = pinSet()
+        // Locked even when Settings itself isn't protected: otherwise anyone could simply switch these off.
+        if (pin && !unlocked()) {
+            val asks = Parental.GUARDS.filter { it in prefs.pinGuards }.joinToString(", ") { guardName(it) }.ifEmpty { "nothing else" }
+            val sites = prefs.blockedSites.size
+            card.addView(actionRow("Locked", "The PIN protects $asks. ${if (sites == 1) "1 blocked site" else "$sites blocked sites"}. " +
+                "Safe search ${if (prefs.safeSearch) "on" else "off"}.", "Unlock", icon = R.drawable.ic_lock) {
+                askPin("Enter the PIN to change parental controls") { renderSettings(); firstSettingsControl()?.requestFocus() }
+            })
+            card.addView(subheading(FORGOT_PIN))
+            return
+        }
+        card.addView(toggleRow("PIN lock", if (pin) "Unlocked for 5 minutes or until you leave mkTV. Turning the lock off asks for the PIN."
+            else "Asks for a 4-digit PIN before Settings, private browsing, downloads and the phone remote. For a shared TV.", pin) { on ->
+            if (on) pinPad.create(onCancel = ::renderSettings) { rec ->
+                prefs.pinRecord = rec
+                prefs.pinGuards = Parental.GUARDS.toSet()
+                prefs.pinLockout = Parental.Lockout()
+                unlockedAt = SystemClock.elapsedRealtime()
+                note("PIN set. mkTV stays unlocked for 5 minutes, or until you leave it.")
+                renderSettings()
+            } else pinPad.verify("Enter the PIN to turn the lock off", onCancel = ::renderSettings) {
+                prefs.pinRecord = null
+                prefs.pinLockout = Parental.Lockout()
+                unlockedAt = 0
+                note("PIN lock is off")
+                renderSettings()
+            }
+        })
+        if (pin) {
+            card.addView(actionRow("Change PIN", "Asks for the current PIN, then the new one twice", "Change", icon = R.drawable.ic_edit) {
+                pinPad.change { rec -> prefs.pinRecord = rec; unlockedAt = SystemClock.elapsedRealtime(); note("PIN changed") }
+            })
+            card.addView(subheading("Ask for the PIN before"))
+            listOf(
+                Triple(Parental.GUARD_SETTINGS, "Opening Settings", "Parental controls always need the PIN, even when this is off"),
+                Triple(Parental.GUARD_PRIVATE, "Private browsing", "Opening a private session"),
+                Triple(Parental.GUARD_DOWNLOADS, "Downloads", "Starting a download, and installing apps from Downloads"),
+                Triple(Parental.GUARD_REMOTE, "Phone remote", "Turning it on, and New code"),
+            ).forEach { (id, title, sub) ->
+                card.addView(toggleRow(title, sub, id in prefs.pinGuards) { on -> prefs.pinGuards = if (on) prefs.pinGuards + id else prefs.pinGuards - id })
+            }
+        }
+
+        card.addView(subheading("Search"))
+        card.addView(toggleRow("Safe search", "Google, Bing and DuckDuckGo always hide explicit results. Other search engines and YouTube aren't covered.", prefs.safeSearch) {
+            prefs.safeSearch = it; settingsDirty = true
+        })
+
+        card.addView(subheading("Blocked sites: they never load, in any tab, private ones too"))
+        prefs.blockedSites.sorted().forEach { d ->
+            card.addView(actionRow(d, "And its subdomains", "Remove", icon = R.drawable.ic_delete) {
+                setBlockedSites(prefs.blockedSites - d)
+                rerenderListsFocus(null, ADD_BLOCK)
+            })
+        }
+        card.addView(fieldRow(ADD_BLOCK, "Type a site such as example.com. It's added when you press Done or move away.", "", "example.com") { input ->
+            if (input.isEmpty()) return@fieldRow
+            val d = Parental.normalizeSite(input)
+            when {
+                d == null -> note("That doesn't look like a site address")
+                d in prefs.blockedSites -> note("$d is already blocked")
+                else -> { setBlockedSites(prefs.blockedSites + d); note("$d is blocked") }
+            }
+            // After focus has settled: moved away with ▲▼ keeps that row; Done (focus cleared) comes back to the field.
+            root.post {
+                if (settingsPanel.visibility != View.VISIBLE) return@post
+                val f = currentFocus
+                renderSettings()
+                if (f == null || !isInside(settingsPanel, f) || f is EditText)
+                    findViewById<ViewGroup>(R.id.settingsContent).findViewWithTag<View>("field:$ADD_BLOCK")?.requestFocus()
+            }
+        })
+        if (pin) card.addView(subheading(FORGOT_PIN))
+    }
+
     // endregion
 
     // region Zoom and full-screen fill
@@ -2955,7 +3131,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         shortcutsPanel.visibility == View.VISIBLE || settingsPanel.visibility == View.VISIBLE ||
             shieldPanel.visibility == View.VISIBLE || menuOpen() || remotePanel.visibility == View.VISIBLE ||
             historyPanel.visibility == View.VISIBLE || wifiPanel.visibility == View.VISIBLE || suggestOpen() ||
-            downloadsPanel.visibility == View.VISIBLE || controlsOpen()
+            downloadsPanel.visibility == View.VISIBLE || controlsOpen() || pinPad.isOpen
 
     // ---- Phone remote (LAN web page, paired by QR code) ----
 
@@ -2964,6 +3140,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun showPhoneRemote() {
         closeMenu()
+        // Opening the panel turns the remote on, so it asks for the PIN when the remote is off.
+        if (!prefs.remoteEnabled && needsPin(Parental.GUARD_REMOTE)) { askPin("Enter the PIN to turn on the phone remote") { showPhoneRemote() }; return }
         prefs.remoteEnabled = true
         startRemote()
         val url = remoteServer.url()
@@ -3318,7 +3496,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     override fun onKey(key: String, action: String) = runOnUiThread {
-        if (key == "home") { if (action != "up") { closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
+        if (key == "home") { if (action != "up") { pinPad.cancel(); closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
         // Apps can't inject volume keys; adjust the media stream directly (FLAG_SHOW_UI shows the TV's own volume bar).
         if (key == "volup" || key == "voldown" || key == "mute") {
             if (action != "up") (getSystemService(AUDIO_SERVICE) as android.media.AudioManager).adjustStreamVolume(
@@ -3370,6 +3548,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
      * Live typing sends only the change: Backspace [deletes] times, then the new characters.
      */
     override fun onText(text: String, deletes: Int, clear: Boolean, enter: Boolean) = runOnUiThread {
+        // Typed into the focused key's view, the digits would skip the pad's own key handling.
+        if (pinPad.isOpen) { pinPad.typed(text, deletes, clear); return@runOnUiThread }
         val target: View = currentFocus ?: webView
         fun press(code: Int, meta: Int = 0) {
             val t = SystemClock.uptimeMillis()
@@ -3396,6 +3576,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (url.isBlank()) return@runOnUiThread
         val target = normalizeInput(url)
         if (!RemoteInput.openable(target)) { note("The phone can only open web pages"); return@runOnUiThread }
+        // Parental controls: refused, and the TV says why (the page would only show the blocked notice anyway).
+        Uri.parse(target).host?.takeIf { parentalBlocks(it) }?.let { h ->
+            showSnack(R.drawable.ic_lock, "Blocked by parental controls · $h", "", action = null); return@runOnUiThread
+        }
+        pinPad.cancel()
         closeMenu(); closePhoneRemote(); closeShortcuts()
         load(target)
     }
@@ -3472,14 +3657,17 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     /** New pairing code: every phone that had the remote loses it until it scans the new QR code. */
-    private fun unpairPhones() {
+    private fun unpairPhones(after: () -> Unit = {}) {
+        if (needsPin(Parental.GUARD_REMOTE)) { askPin("Enter the PIN to make a new code") { unpairPhones(after) }; return }
+        after()
         remoteServer.resetToken()
         if (remotePanel.visibility == View.VISIBLE) showPhoneRemote()
         note("All phones unpaired. Scan the new code to connect again.")
     }
 
     /** Settings switch: off stops the server now and keeps it off until Phone remote is opened again. */
-    private fun setRemoteEnabled(on: Boolean) {
+    private fun setRemoteEnabled(on: Boolean, onCancel: () -> Unit = {}) {
+        if (on && needsPin(Parental.GUARD_REMOTE)) { askPin("Enter the PIN to turn on the phone remote", onCancel) { setRemoteEnabled(true) }; return }
         prefs.remoteEnabled = on
         if (on) startRemote() else remoteServer.stop()
     }
@@ -3857,6 +4045,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 okDown += event.keyCode
             } else if (event.action == KeyEvent.ACTION_UP && !okDown.remove(event.keyCode)) return true
         }
+        // The PIN pad takes the remote's number keys, and Menu / Search can't open anything over it.
+        if (pinPad.isOpen && pinPad.handleKey(event)) return true
         if (isKeyboardVisible()) return super.dispatchKeyEvent(event)
         val down = event.action == KeyEvent.ACTION_DOWN
         val f = currentFocus
@@ -4576,6 +4766,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         when {
+            pinPad.isOpen -> pinPad.cancel()
             controlsOpen() -> closeControls()
             customView != null -> exitFullscreen(notifyPage = true)
             filling && !overlayOpen() -> exitFill()
@@ -4717,6 +4908,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     override fun onStop() {
         super.onStop()
+        // Parental controls lock again whenever mkTV leaves the screen.
+        unlockedAt = 0
+        pinPad.cancel()
         remoteServer.stop()
         downloads.onStop()
         TvHome.sync(this, foreground = false) // cheap when nothing changed
@@ -4742,6 +4936,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             "Protection" to R.drawable.ic_shield_on,
             "Blocklists" to R.drawable.ic_grid,
             "Privacy" to R.drawable.ic_private,
+            "Parental controls" to R.drawable.ic_lock,
             "Phone remote" to R.drawable.ic_phone,
             "Browsing" to R.drawable.ic_desktop,
             "Downloads" to R.drawable.ic_download,

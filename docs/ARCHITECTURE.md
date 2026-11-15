@@ -40,6 +40,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `PointerMotion.kt` | Android-free, unit-tested: pointer-mode speed (Slow / Normal / Fast, acceleration ramp or steady) and the phone touchpad gain |
 | `Downloads.kt` | Android-free, unit-tested: download file names (`Content-Disposition`, URL, MIME), sanitising, sizes, `data:` URL parsing, the Downloads list and its JSON |
 | `DownloadCenter.kt` | WebView downloads: confirm prompt, system `DownloadManager` (page cookies, user agent, Referer), `data:`/`blob:` saving (blob read in the page and copied out in chunks with `evaluateJavascript`), status polling, Open/Remove/Delete, the Downloads panel rows. Private-mode entries stay in memory |
+| `Parental.kt` | Android-free, unit-tested: parental controls PIN hashing (PBKDF2-HMAC-SHA256 on `Mac`, salted, hex), wrong-PIN lockout and the 5-minute unlock window, blocked-site matching, SafeSearch URL rewriting, the "Blocked by parental controls" page |
+| `PinPad.kt` | The PIN number pad: a full-screen overlay built in code, 3×4 keys with `nextFocus*` trapping, auto-submit on the 4th digit, set / confirm / change steps, lockout countdown |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
 | `RemoteServer.kt` | Phone remote HTTP server (in progress). Raw `ServerSocket`, one thread per connection, token check, calls back into `BrowserActivity` through `RemoteServer.Listener` |
 | `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used; saves and resumes the Continue watching position under the page's address |
@@ -99,7 +101,7 @@ While the page is active, `pollRing` runs every 350 ms: it re-reads `__sp.rect()
 10. Jump mode: arrows call `jump(dir)`. The first auto-repeat of ▲/▼ (`repeatCount == 1`) jumps to the site's fixed top or bottom bar once per hold. OK taps the ring centre; with no ring it first picks a start element.
 11. Pointer mode: arrows press/release directions on `CursorView`; OK taps at the pointer.
 
-Back goes through `onBackPressed`: close the playback controls, exit page fullscreen, leave fill mode (unless an overlay is open), leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close downloads, close the shield panel, leave home Edit, leave a Favourites folder, close home, leave the toolbar, leave the bottom notice, go back in history, close the tab if other tabs are open, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
+Back goes through `onBackPressed`: cancel the parental PIN pad, close the playback controls, exit page fullscreen, leave fill mode (unless an overlay is open), leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close downloads, close the shield panel, leave home Edit, leave a Favourites folder, close home, leave the toolbar, leave the bottom notice, go back in history, close the tab if other tabs are open, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
 
 ### Clicking and scrolling
 
@@ -121,7 +123,7 @@ The cursor/ring is visible only when `pageActive()` and not on YouTube TV or in 
 
 All in the `WebViewClient` created in `createWebView`:
 
-- **`shouldInterceptRequest`** (network thread). Subresource requests to a blocked host get an empty `200 text/plain` response when protection is on. Any URL ending in `.m3u8` or `.mpd` is recorded as a `DetectedStream` with the request's Referer and Origin, unless it is a variant under an already-seen master.
+- **`shouldInterceptRequest`** (network thread). First, parental controls: any request to a blocked site gets the "Blocked by parental controls" page (main frame) or an empty response, whatever the ad-blocking state (`shouldOverrideUrlLoading` repeats the check, since redirect targets don't come back here, and a `ServiceWorkerClientCompat` covers service-worker fetches). Subresource requests to a blocked host get an empty `200 text/plain` response when protection is on. Any URL ending in `.m3u8` or `.mpd` is recorded as a `DetectedStream` with the request's Referer and Origin, unless it is a variant under an already-seen master.
 - **`shouldOverrideUrlLoading`**. Non-web schemes (`intent:`, `market:`, ...) are always blocked. A one-time bypass lets "Open anyway" through. A change of user agent (entering/leaving `youtube.com/tv`) reloads via `load()`. Tracking parameters are stripped from main-frame navigations. When protection is on: navigations to blocked hosts are stopped, and main-frame cross-site navigations without a user gesture and not server redirects are blocked as "sneaky redirects".
 - **`onCreateWindow`**. Pop-ups without a user gesture are dropped. With a gesture, a throwaway WebView catches the target URL; unless it is a blocked host or (with "Block pop-ups" on) a different site, it opens in a new tab (`openInNewTab`), private if the opener is private.
 
