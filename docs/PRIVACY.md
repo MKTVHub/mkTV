@@ -56,7 +56,7 @@ What pages receive from mkTV beyond a normal browser:
 When the TV's WebView supports multiple profiles (`MULTI_PROFILE`, most up-to-date Android TV devices):
 
 - Private pages use a separate WebView profile with its own cookies, local storage, IndexedDB, cache and history.
-- When you close private browsing, or the app closes, the private WebView is destroyed and the profile is deleted. A leftover profile from a crash or force-stop is deleted at the next launch.
+- When you close private browsing, or the app closes, every private tab's WebView is destroyed and the profile is deleted. Open tabs (private or not) are kept in memory only, never written to storage. A leftover profile from a crash or force-stop is deleted at the next launch.
 - Nothing from the session is written to mkTV's own storage: no recents, no site icons, no favourites unless you add one on purpose (adding a favourite in private mode saves it permanently).
 - Third-party cookies are refused, ad and tracker blocking stays on, and tracking parameters are stripped.
 - Release builds set `FLAG_SECURE`, which keeps private pages out of the Recents screen thumbnails and screenshots. Debug builds do not, for testing.
