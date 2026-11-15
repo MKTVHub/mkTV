@@ -144,7 +144,7 @@ class PlayerActivity : Activity() {
                 val saved = ContinueWatching.find(Prefs(this@PlayerActivity).continueWatching, page) ?: return
                 if (!ContinueWatching.shouldOffer(saved, exo.currentPosition / 1000.0, dur / 1000.0)) return
                 exo.seekTo((saved.position * 1000).toLong())
-                showMessage("Resumed from ${ContinueWatching.clock(saved.position)}")
+                showMessage("Resumed from ${ContinueWatching.clock(saved.position)}", clearOfSpinner = true)
                 handler.postDelayed({ if (message.text.startsWith("Resumed")) message.visibility = View.GONE }, 3_000)
             }
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -185,6 +185,16 @@ class PlayerActivity : Activity() {
         if (pageUrl != null) TvHome.sync(this, foreground = false)
     }
 
+    override fun onResume() {
+        super.onResume()
+        front = java.lang.ref.WeakReference(this)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (front?.get() === this) front = null
+    }
+
     override fun onStart() {
         super.onStart()
         current = java.lang.ref.WeakReference(this)
@@ -217,8 +227,13 @@ class PlayerActivity : Activity() {
 
     // ---- Overlay ----
 
-    private fun showMessage(text: String) {
+    /**
+     * [clearOfSpinner]: above the centre, so the buffering spinner (still turning right after a resume seek)
+     * doesn't cover it; 80 dp clears the spinner below and the title block above, and the bottom bar is taller.
+     */
+    private fun showMessage(text: String, clearOfSpinner: Boolean = false) {
         message.text = text
+        message.translationY = if (clearOfSpinner) -80 * resources.displayMetrics.density else 0f
         message.visibility = View.VISIBLE
     }
 
@@ -400,6 +415,32 @@ class PlayerActivity : Activity() {
         @Suppress("DEPRECATION") super.onBackPressed()
     }
 
+    // ---- Phone remote (the browser's server hands these over while this player is in front) ----
+
+    /** Seek bar, speed and subtitles from the phone's Now playing card ([PlayerRemote.media]). */
+    fun remoteMedia(action: String, value: Double) {
+        val exo = player ?: return
+        when (action) {
+            "seek" -> if (exo.isCurrentMediaItemSeekable) { exo.seekTo(PlayerRemote.seekMs(value, exo.duration)); setOverlay(true) }
+            "speed" -> PlaybackSpeed.exact(value)?.let { exo.setPlaybackSpeed(it.toFloat()); setOverlay(true) }
+            "captions" -> { nextCaptions(); setOverlay(true) }
+        }
+        refresh()
+    }
+
+    fun remoteStatus(): org.json.JSONObject {
+        val exo = player ?: return org.json.JSONObject().put("has", false)
+        val captions = captionTracks(exo)
+        return PlayerRemote.status(
+            playing = exo.isPlaying || (exo.playWhenReady && exo.playbackState == Player.STATE_BUFFERING),
+            positionMs = exo.currentPosition, durationMs = exo.duration.takeIf { it != C.TIME_UNSET } ?: 0L,
+            live = exo.isCurrentMediaItemLive, speed = exo.playbackParameters.speed.toDouble(),
+            captions = captions.isNotEmpty(), captionsOn = captions.any { (g, i) -> g.isTrackSelected(i) },
+        )
+    }
+
+    fun remoteTitle(): String = findViewById<TextView>(R.id.playerTitle).text.toString()
+
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         player?.release()
@@ -422,6 +463,14 @@ class PlayerActivity : Activity() {
         private var current: java.lang.ref.WeakReference<PlayerActivity>? = null
         /** Sleep timer set to "End of video"; cleared by whichever (page or this player) reaches the end first. */
         @Volatile var sleepAtEnd = false
+
+        /** The player in front (between onResume and onPause): phone remote keys and media actions go to it. Main thread only. */
+        private var front: java.lang.ref.WeakReference<PlayerActivity>? = null
+
+        fun front(): PlayerActivity? = front?.get()?.takeIf { !it.isFinishing }
+
+        /** The phone's Home, or a page opened from the phone: leave the player for the browser. */
+        fun closeFront() { front()?.finish() }
 
         /** Main thread only. True if a player was on screen. */
         fun pauseForSleep(): Boolean {

@@ -27,7 +27,7 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list; turn on OISD, HaGeZi, Peter Lowe's or StevenBlack variants, add any hosts or domain list by address, and allowlist domains that must never be blocked), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway** (press ▼ to reach it). Pause blocking for one site from the shield.
 - **YouTube ad removal** using the same technique as uBlock Origin and Brave.
 - **Private browsing.** A separate session that is deleted when you close it. Tracking codes are stripped from links and Global Privacy Control is on.
-- **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video, volume and page scroll, **Add to Favourites** for the page on the TV, and a **Jump / Pointer** switch for how the remote moves around pages. The QR code carries a 128-bit pairing code that stays valid until you press **New code**, which unpairs every phone. The **Devices** tab lists connected phones with **Disconnect**, the TV shows a notice when a new phone connects, and Settings has an on/off switch.
+- **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video (in the native player too), volume and page scroll, **Add to Favourites** for the page on the TV, and a **Jump / Pointer** switch for how the remote moves around pages. The QR code carries a 128-bit pairing code that stays valid until you press **New code**, which unpairs every phone. The **Devices** tab lists connected phones with **Disconnect**, the TV shows a notice when a new phone connects, and Settings has an on/off switch.
 - **Parental controls.** A 4-digit PIN for Settings, private browsing, downloads and the phone remote; Safe search for Google, Bing and DuckDuckGo; and sites that never load, in any tab.
 - **Share Wi-Fi.** Show a QR code that guests scan to join your Wi-Fi.
 - **Settings** in a sidebar of sections: Navigation, Start screen, Search, Protection, Blocklists, Privacy, Parental controls, Phone remote, Browsing, Downloads, Updates.
@@ -55,7 +55,7 @@ Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 | YouTube TV | All keys | Go to YouTube; **hold Back** for the mkTV home screen |
 | Address bar | ▼ | Move into the suggestions (press Back first to close the on-screen keyboard) |
 | Anywhere | Search (if the remote has it) | Voice search |
-| | Back | Close what's open, go back, press twice to exit |
+| | Back | Close what's open, go back; at the start of a page's history, mkTV Home; on that Home, press twice to exit |
 
 ## Install
 

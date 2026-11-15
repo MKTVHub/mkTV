@@ -87,6 +87,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var clickDownTime = 0L
     private var lastBackPress = 0L
+    /** Home is showing because Back reached the start of the page's history ([BackAction]); cleared when Home opens or closes otherwise. */
+    private var homeFromBack = false
 
     /** Headers are the ones the page actually sent when it requested the manifest. */
     data class DetectedStream(val url: String, val referer: String?, val origin: String?)
@@ -95,6 +97,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_browser)
         prefs = Prefs(this)
+        application.registerActivityLifecycleCallbacks(activityCounter) // before onStart, so this activity counts too
         blocker = AdBlocker(this, prefs) // lists load in onResume
         parentalSites = prefs.blockedSites
 
@@ -660,7 +663,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         urlField.clearFocus()
         historyPanel.visibility = View.GONE
         downloadsPanel.visibility = View.GONE
-        shortcutsPanel.visibility = View.GONE
+        shortcutsPanel.visibility = View.GONE; homeFromBack = false
         editingShortcuts = false
         editingPopular = false
         onOverlayChanged(null)
@@ -1057,6 +1060,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun openShortcuts() {
+        homeFromBack = false // opened on purpose (Home button, ⋮, the phone); Back's own opening sets it after this
         closeControls() // e.g. the phone's Home key while the playback controls are open
         menuScroll.visibility = View.GONE
         shieldPanel.visibility = View.GONE
@@ -1084,6 +1088,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun closeShortcuts() {
+        homeFromBack = false
         if (shortcutsPanel.visibility != View.VISIBLE) return
         shortcutsPanel.visibility = View.GONE
         editingShortcuts = false
@@ -3568,25 +3573,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         heldKeys.clear()
     }
 
-    /**
-     * Phone keys are dispatched straight into the activity, which skips the step of Android's input
-     * pipeline that moves focus between views on arrow keys (only scrolling containers handled ▲▼ by
-     * themselves, so ◀▶ between Home's buttons did nothing). Do that focus move here when nothing
-     * else consumed the arrow, exactly as a hardware D-pad would.
-     */
-    private fun sendRemoteKey(e: KeyEvent): Boolean {
-        e.source = android.view.InputDevice.SOURCE_DPAD
-        if (dispatchKeyEvent(e) || e.action != KeyEvent.ACTION_DOWN) return true
-        val dir = when (e.keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP -> View.FOCUS_UP; KeyEvent.KEYCODE_DPAD_DOWN -> View.FOCUS_DOWN
-            KeyEvent.KEYCODE_DPAD_LEFT -> View.FOCUS_LEFT; KeyEvent.KEYCODE_DPAD_RIGHT -> View.FOCUS_RIGHT
-            else -> return false
-        }
-        return currentFocus?.focusSearch(dir)?.requestFocus(dir) == true
-    }
+    /** A phone key to the screen in front: the native player when it covers the browser, else the browser ([dispatchRemoteKey]). */
+    private fun sendRemoteKey(e: KeyEvent): Boolean = (PlayerActivity.front() ?: this).dispatchRemoteKey(e)
 
     override fun onKey(key: String, action: String) = runOnUiThread {
-        if (key == "home") { if (action != "up") { pinPad.cancel(); closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
+        if (key == "home") { if (action != "up") { PlayerActivity.closeFront(); pinPad.cancel(); closeMenu(); closePhoneRemote(); if (prefs.startWithShortcuts) openShortcuts() else load(normalizeInput(prefs.homeUrl)) }; return@runOnUiThread }
         // Apps can't inject volume keys; adjust the media stream directly (FLAG_SHOW_UI shows the TV's own volume bar).
         if (key == "volup" || key == "voldown" || key == "mute") {
             if (action != "up") (getSystemService(AUDIO_SERVICE) as android.media.AudioManager).adjustStreamVolume(
@@ -3640,6 +3631,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
      * Live typing sends only the change: Backspace [deletes] times, then the new characters.
      */
     override fun onText(text: String, deletes: Int, clear: Boolean, enter: Boolean) = runOnUiThread {
+        if (PlayerActivity.front() != null) return@runOnUiThread // the player has nothing to type into
         // Typed into the focused key's view, the digits would skip the pad's own key handling.
         if (pinPad.isOpen) { pinPad.typed(text, deletes, clear); return@runOnUiThread }
         val target: View = currentFocus ?: webView
@@ -3672,13 +3664,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         Uri.parse(target).host?.takeIf { parentalBlocks(it) }?.let { h ->
             showSnack(R.drawable.ic_lock, "Blocked by parental controls · $h", "", action = null); return@runOnUiThread
         }
+        PlayerActivity.closeFront() // the page opens in the browser, so the player gives way
         pinPad.cancel()
         closeMenu(); closePhoneRemote(); closeShortcuts()
         load(target)
     }
 
     /** Where arrows would move the pointer, a touchpad drag moves it too; elsewhere the phone sends arrow keys. */
-    private fun pointerActive() = !jumpMode && pageActive() && !siteRemote && !watching && customView == null
+    private fun pointerActive() = PlayerActivity.front() == null && !jumpMode && pageActive() && !siteRemote && !watching && customView == null
 
     override fun onMove(dx: Double, dy: Double) = runOnUiThread {
         if (!pointerActive()) return@runOnUiThread
@@ -3688,6 +3681,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     override fun onMedia(action: String, value: Double) = runOnUiThread {
+        val player = PlayerActivity.front()
+        if (player != null && PlayerRemote.media(action) != PlayerRemote.Target.BROWSER) { player.remoteMedia(action, value); return@runOnUiThread }
         when (action) {
             "seek" -> webView.evaluateJavascript("window.__sp && __sp.seekTo($value)", null)
             "fullscreen" -> toggleTheater()
@@ -3710,12 +3705,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 .put("canFav", hasPage()).put("fav", hasPage() && isFavourite(webView.url))
                 // Sleep timer: minutes chosen (0 off, -1 end of video) and whole seconds left for a timed one.
                 .put("sleep", org.json.JSONObject().put("mode", sleepMode).put("left", (sleepLeftMs() + 999) / 1000)))
-            if (!hasPage()) latch.countDown()
+            val player = PlayerActivity.front()
+            // The native player in front: its video is Now playing (the page's own one is paused behind it).
+            if (player != null) { base.get().put("title", player.remoteTitle()).put("media", player.remoteStatus()); latch.countDown() }
+            else if (!hasPage()) latch.countDown()
             else webView.evaluateJavascript("window.__sp ? __sp.status() : null") { r -> media.set(r); latch.countDown() }
         }
         latch.await(1, java.util.concurrent.TimeUnit.SECONDS)
         val o = base.get() ?: org.json.JSONObject().put("title", "mkTV")
-        parseJs(media.get())?.takeIf { it.optBoolean("has") }?.let { o.put("media", it) }
+        if (!o.has("media")) parseJs(media.get())?.takeIf { it.optBoolean("has") }?.let { o.put("media", it) }
         return o
     }
 
@@ -3784,6 +3782,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         // On the Devices tab, show the newcomer in the list instead of closing the panel.
         if (pairing && remoteTab == "devices") { renderRemoteDevices(); styleRemoteTabs(); wireRemoteFocus() } else closePhoneRemote()
         // Every new device is announced, so a phone you don't know about can't drive the TV unnoticed.
+        // The native player covers the notice below, so a toast says it over the player too.
+        if (PlayerActivity.front() != null) note("New phone connected · $address")
         showSnack(R.drawable.ic_phone, if (pairing) "Phone remote connected" else "New phone connected · $address", "Unpair all", reachable = !pairing) { unpairPhones() }
     }
 
@@ -4931,14 +4931,22 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             shortcutsPanel.visibility == View.VISIBLE && editingPopular -> { editingPopular = false; renderShortcuts(); findViewById<View>(R.id.popularEdit).requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && editingContinue -> { editingContinue = false; renderShortcuts(); (findViewById<View>(R.id.cwEdit).takeIf { it.isShown } ?: firstHomeTile())?.requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && openFolder >= 0 -> closeFavFolder()
-            shortcutsPanel.visibility == View.VISIBLE && hasPage() -> closeShortcuts()
-            isInside(toolbar, currentFocus) -> leaveToPage()
-            isInside(snackbar, currentFocus) -> hideSnackbar()
-            webView.canGoBack() -> webView.goBack()
-            // First page of a tab (e.g. a pop-up) with other tabs open: close it and return to the previous tab.
-            modeTabs().size > 1 -> { closeTab(activeTab); note("Tab closed") }
-            SystemClock.uptimeMillis() - lastBackPress < 2000 -> @Suppress("DEPRECATION") super.onBackPressed()
-            else -> { lastBackPress = SystemClock.uptimeMillis(); note("Press Back again to exit") }
+            else -> when (BackAction.decide(
+                homeShown = shortcutsPanel.visibility == View.VISIBLE, homeFromBack = homeFromBack, hasPage = hasPage(),
+                toolbarFocused = isInside(toolbar, currentFocus), snackbarFocused = isInside(snackbar, currentFocus),
+                canGoBack = webView.canGoBack(), otherTabs = modeTabs().size > 1,
+                sinceExitPromptMs = SystemClock.uptimeMillis() - lastBackPress,
+            )) {
+                BackAction.Action.CLOSE_HOME -> closeShortcuts()
+                BackAction.Action.LEAVE_TOOLBAR -> leaveToPage()
+                BackAction.Action.HIDE_SNACKBAR -> hideSnackbar()
+                BackAction.Action.GO_BACK -> webView.goBack()
+                BackAction.Action.CLOSE_TAB -> { closeTab(activeTab); note("Tab closed") }
+                // Start of history: mkTV Home, and Back there asks to exit (lastBackPress reset so it always asks first).
+                BackAction.Action.OPEN_HOME -> { lastBackPress = 0; openShortcuts(); homeFromBack = true }
+                BackAction.Action.EXIT -> @Suppress("DEPRECATION") super.onBackPressed()
+                BackAction.Action.PROMPT_EXIT -> { lastBackPress = SystemClock.uptimeMillis(); note("Press Back again to exit") }
+            }
         }
     }
 
@@ -4993,7 +5001,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         downloadsPanel.visibility = View.GONE
         if (remotePanel.visibility == View.VISIBLE) closePhoneRemote()
         if (wifiPanel.visibility == View.VISIBLE) closeShareWifi()
-        shortcutsPanel.visibility = View.GONE
+        shortcutsPanel.visibility = View.GONE; homeFromBack = false
         editingShortcuts = false; editingPopular = false; editingContinue = false
         onOverlayChanged(null)
         val key = ContinueWatching.key(url)
@@ -5036,12 +5044,30 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
      */
     private fun startRemote(attempt: Int = 0) {
         remoteServer.start()
-        if (!remoteServer.running && attempt < 6) root.postDelayed({ if (!isFinishing) startRemote(attempt + 1) }, 700)
+        if (!remoteServer.running && attempt < 6) root.postDelayed({ if (!isFinishing && foreground.visible) startRemote(attempt + 1) }, 700)
+    }
+
+    /**
+     * "On screen" is any mkTV activity started, not just this one: the native player covers the browser
+     * and the phone keeps working there. The server stops only when the last one stops.
+     */
+    private val foreground = ForegroundCounter(
+        onForeground = { if (prefs.remoteEnabled) startRemote() },
+        onBackground = { remoteServer.stop(); releaseHeldKeys() }, // the server is gone, so no "up" can arrive
+    )
+
+    private val activityCounter = object : android.app.Application.ActivityLifecycleCallbacks {
+        override fun onActivityStarted(a: Activity) = foreground.activityStarted(System.identityHashCode(a))
+        override fun onActivityStopped(a: Activity) = foreground.activityStopped(System.identityHashCode(a))
+        override fun onActivityCreated(a: Activity, b: Bundle?) = Unit
+        override fun onActivityResumed(a: Activity) = Unit
+        override fun onActivityPaused(a: Activity) = Unit
+        override fun onActivitySaveInstanceState(a: Activity, b: Bundle) = Unit
+        override fun onActivityDestroyed(a: Activity) = Unit
     }
 
     override fun onStart() {
         super.onStart()
-        if (prefs.remoteEnabled) startRemote()
         downloads.onStart()
     }
 
@@ -5050,8 +5076,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         // Parental controls lock again whenever mkTV leaves the screen.
         unlockedAt = 0
         pinPad.cancel()
-        remoteServer.stop()
-        releaseHeldKeys() // the server is gone, so no "up" can arrive
+        // The phone remote keeps running while the native player is in front ([foreground]); its keys go there now.
+        releaseHeldKeys()
         downloads.onStop()
         TvHome.sync(this, foreground = false) // cheap when nothing changed
     }
@@ -5059,6 +5085,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun onDestroy() {
         sleepHandler.removeCallbacksAndMessages(null)
         PlayerActivity.sleepAtEnd = false
+        application.unregisterActivityLifecycleCallbacks(activityCounter)
         remoteServer.stop()
         tabs.forEach { destroyTab(it) }
         if (multiProfile) runCatching { androidx.webkit.ProfileStore.getInstance().deleteProfile(PRIVATE_PROFILE) }
