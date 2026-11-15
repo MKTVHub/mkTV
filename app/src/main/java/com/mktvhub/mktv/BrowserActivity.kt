@@ -708,7 +708,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun toggleShieldPanel() {
-        menuPanel.visibility = View.GONE
+        menuScroll.visibility = View.GONE
         if (shieldPanel.visibility == View.VISIBLE) { closeShieldPanel(); return }
         bindShieldPanel()
         shieldPanel.visibility = View.VISIBLE
@@ -871,7 +871,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun openShortcuts() {
-        menuPanel.visibility = View.GONE
+        menuScroll.visibility = View.GONE
         shieldPanel.visibility = View.GONE
         if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
         historyPanel.visibility = View.GONE
@@ -1563,7 +1563,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     }
 
     private fun showSettings() {
-        menuPanel.visibility = View.GONE
+        menuScroll.visibility = View.GONE
         shieldPanel.visibility = View.GONE
         historyPanel.visibility = View.GONE
         closeShortcuts()
@@ -2589,7 +2589,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // ---- ⋮ menu ----
 
     private val menuPanel: LinearLayout by lazy { findViewById(R.id.menuPanel) }
-    private fun menuOpen() = menuPanel.visibility == View.VISIBLE
+    private val menuScroll: View by lazy { findViewById(R.id.menuScroll) }
+    private fun menuOpen() = menuScroll.visibility == View.VISIBLE
 
     private fun toggleMenu() { if (menuOpen()) closeMenu() else openMenu() }
 
@@ -2597,7 +2598,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         shieldPanel.visibility = View.GONE
         inSubMenu = false
         buildMenu()
-        menuPanel.visibility = View.VISIBLE
+        menuScroll.visibility = View.VISIBLE
+        menuScroll.scrollTo(0, 0)
         onOverlayChanged(firstMenuItem())
     }
 
@@ -2618,7 +2620,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun closeMenu() {
         if (!menuOpen()) return
-        menuPanel.visibility = View.GONE
+        menuScroll.visibility = View.GONE
         onOverlayChanged(null)
     }
 

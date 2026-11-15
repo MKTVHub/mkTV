@@ -219,19 +219,27 @@
     </LinearLayout>
 
     <!-- Overflow menu (like a phone browser's ⋮ menu) -->
-    <LinearLayout
-        android:id="@+id/menuPanel"
+    <!-- Scrolls when the rows outgrow the screen; focus moving down brings the row into view -->
+    <ScrollView
+        android:id="@+id/menuScroll"
         android:layout_width="360dp"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
         android:layout_marginTop="60dp"
         android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp"
         android:background="@drawable/panel_bg"
         android:clickable="true"
         android:elevation="16dp"
-        android:orientation="vertical"
-        android:padding="8dp"
-        android:visibility="gone" />
+        android:scrollbars="none"
+        android:visibility="gone">
+        <LinearLayout
+            android:id="@+id/menuPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="8dp" />
+    </ScrollView>
 
     <!-- Address-bar suggestions: placed under the address field in code -->
     <LinearLayout
