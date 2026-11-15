@@ -38,6 +38,7 @@ app/src/main/
     WebSearch.kt          Pure: search engines, address-bar input → URL, suggestion parsing, Favourites/History matching
     History.kt            Pure: browsing history list, search, day labels
     Updates.kt            Pure: GitHub release parsing, version comparison
+    PageZoom.kt           Pure: zoom levels, per-site zoom storage, full-screen fill fallback decision
     Prefs.kt              SharedPreferences wrapper: every user setting, favourites, recents, history, counters, update state
     PlayerActivity.kt     Full-screen Media3 ExoPlayer for HLS/DASH manifests found on a page
     RemoteServer.kt       Phone remote: tiny LAN HTTP server with a pairing token (see docs/PHONE_REMOTE.md)
@@ -49,7 +50,7 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):
@@ -90,7 +91,7 @@ mkTV is a **native Android shell around a system WebView, plus a JavaScript laye
 10. Jump mode: arrows call `jump()`; a held ▲/▼ (first repeat) jumps to the site's fixed bar; OK taps the ring.
 11. Pointer mode: arrows drive `CursorView`; OK taps at the pointer.
 
-Back is handled separately in `onBackPressed` (fullscreen, suggestion list, phone remote panel, menu, watch mode, settings, History page, shield panel, home edit, home, toolbar, back in page history, then "press again to exit"). On YouTube TV, `handleSiteRemote` sends a short Back to the page as Escape and a long Back opens the mkTV home screen.
+Back is handled separately in `onBackPressed` (fullscreen, fill mode, suggestion list, phone remote panel, menu, watch mode, settings, History page, shield panel, home edit, home, toolbar, back in page history, then "press again to exit"). On YouTube TV, `handleSiteRemote` sends a short Back to the page as Escape and a long Back opens the mkTV home screen.
 
 **Overlays vs page focus.** The home screen, settings, History page, shield panel, ⋮ menu, phone remote panel and address-bar suggestion list are native views using normal Android focus. When any is open (`overlayOpen()`), `webContainer` blocks descendant focus so the page cannot steal it, the top bar stays visible, and the cursor/ring is hidden. `onOverlayChanged()` is the single place that flips this; call it whenever you open or close an overlay.
 

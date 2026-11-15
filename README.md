@@ -18,7 +18,8 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **History.** Every page you've opened, grouped by day, searchable and remote-friendly. Remove single pages or clear it all.
 - **Updates in the app.** When a new release is out, the home screen offers it. One press downloads it from GitHub and opens Android's installer.
 - **YouTube on the TV interface.** The YouTube tile opens YouTube's own TV interface, with the remote passed straight through.
-- **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for real full screen. Videos start with sound.
+- **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for full screen. Where a site's player can't go full screen, mkTV fills the screen with the video itself. Videos start with sound.
+- **Page zoom.** Make any site bigger or smaller from ⋮ → Zoom; remembered per site, with a default in Settings.
 - **Native player.** If a page plays an HLS or DASH stream, **Watch full screen** opens it in a native player that is smoother on TV hardware.
 - **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list; turn on OISD, HaGeZi, Peter Lowe's or StevenBlack variants, add any hosts or domain list by address, and allowlist domains that must never be blocked), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway**. Pause blocking for one site from the shield.
 - **YouTube ad removal** using the same technique as uBlock Origin and Brave.

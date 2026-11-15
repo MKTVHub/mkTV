@@ -195,6 +195,16 @@ class Prefs(context: Context) {
         get() = p.getString("dismissed_update", null)
         set(v) = p.edit().putString("dismissed_update", v).apply()
 
+    // ---- Page zoom (see PageZoom) ----
+    /** Zoom for sites without their own level, in percent. */
+    var defaultZoom: Int
+        get() = PageZoom.snap(p.getInt("default_zoom", PageZoom.DEFAULT))
+        set(v) = p.edit().putInt("default_zoom", PageZoom.snap(v)).apply()
+    /** Per-host zoom levels (normal mode only; private browsing keeps its levels in memory). */
+    var siteZoom: Map<String, Int>
+        get() = PageZoom.parse(p.getStringSet("site_zoom", emptySet())!!)
+        set(v) = p.edit().putStringSet("site_zoom", PageZoom.serialize(v)).apply()
+
     companion object {
         val HOME_SECTIONS = listOf("pop", "fav", "rec")
         /** Curated Popular row a fresh install starts with. */

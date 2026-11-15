@@ -34,9 +34,9 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## ⋮ menu
 
-**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Desktop site (On / Off), History, Phone remote, Clear browsing data…, Settings. Phone remote (see below).
+**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Zoom (current level), Desktop site (On / Off), History, Phone remote, Clear browsing data…, Settings. Phone remote (see below).
 
-**Where.** `buildMenu`, `showClearMenu`, `clearData`.
+**Where.** `buildMenu`, `showClearMenu`, `clearData`, `showZoomMenu`.
 
 **Clear browsing data (menu).** Checkboxes for History (back/forward, the History page and Recently visited, on by default), Cookies & site data (off by default) and Cached images & files (on by default).
 
@@ -116,17 +116,27 @@ With the on-screen keyboard open, Back closes the keyboard and ▼ then moves in
 
 **What.** Turns on by itself when a large video (over a quarter of the screen) is playing. The remote then controls the video:
 - Vertical feeds (portrait video, for example short-video feeds): ▲ previous, ▼ next.
-- Normal video: ▼ real full screen, ▲ leave full screen or leave watch mode.
+- Normal video: ▼ full screen, ▲ leave full screen or leave watch mode.
 - ◀ ▶ seek 10 s, OK pause/play, Back browse the page again.
 - A key-hint dock slides up for 2.5 s after each press, and a large symbol flashes for feedback.
 
 Media keys (play/pause, FF/REW, next/previous) work on any page, watch mode or not. After Back, watch mode does not re-enter on the same URL.
 
-**How.** `checkWatch` asks `__sp.media()` about every second for the largest visible `<video>`. "Next" scrolls the video's scroll container by one screen (snap-scrolling feeds land on exactly one item), falling back to synthetic arrow-key events. Full screen calls the Fullscreen API on the player container, after sending a harmless key to the page to provide the user activation the API needs. Watch mode exits after about 3 s with no big video.
+**How.** `checkWatch` asks `__sp.media()` about every second for the largest visible `<video>`. "Next" scrolls the video's scroll container by one screen (snap-scrolling feeds land on exactly one item), falling back to synthetic arrow-key events. Full screen calls the Fullscreen API on the player container, after sending a harmless key to the page to provide the user activation the API needs. If the API is missing or throws, the video is in a same-origin iframe, or no full-screen view appears within 0.9 s, mkTV uses **fill mode** instead: `__sp.fill()` pins the largest visible (preferably playing) `<video>`, or the same-origin iframe that holds it, over the whole viewport with injected CSS (`position:fixed`, full size, `object-fit:contain`, top z-index; ancestors lose transforms and filters that would trap it; everything else is hidden), and the top bar slides away. OK and Play/Pause toggle, ◀ ▶ seek, ▲ or Back put the page back as it was (marks and styles removed, scroll position restored). If a single-page site swaps the `<video>` element, fill follows the new one; after about 5 s with no video it gives up. Watch mode exits after about 3 s with no big video.
 
-**Where.** `// ---- Watch mode ----` (`checkWatch`, `enterWatch`, `exitWatch`, `handleWatchKey`, `handleMediaKey`, `toggleTheater`, `showDock`, `flash`), `page_script.js` (`mainVideo`, `feed`, `fullscreen`).
+**Where.** `// ---- Watch mode ----` (`checkWatch`, `enterWatch`, `exitWatch`, `handleWatchKey`, `handleMediaKey`, `toggleTheater`, `showDock`, `flash`), `// region Zoom and full-screen fill` (`afterFullscreenRequest`, `enterFill`, `exitFill`, `syncFill`), `PageZoom.kt`, `page_script.js` (`mainVideo`, `feed`, `fullscreen`, `fill`, `unfill`).
 
-**Limits.** Videos inside cross-origin iframes (most embedded players) are invisible to the script, so watch mode and media keys don't reach them. Use the player's own controls or "Watch full screen" if a stream was detected.
+**Limits.** Videos inside cross-origin iframes (most embedded players) and inside shadow DOM are invisible to the script, so watch mode, fill and media keys don't reach them. Use the player's own controls or "Watch full screen" if a stream was detected. Fill hides the site's own controls and any captions drawn as page elements (captions from `<track>` still show).
+
+## Page zoom
+
+**What.** Makes whole pages bigger or smaller: ⋮ → **Zoom** shows − / level / + / Reset inside the menu (75, 90, 100, 110, 125, 150, 175, 200 %). Changes apply at once and are remembered for the site (host, ignoring `www.`); Reset returns the site to the default. Settings → Browsing → **Default zoom** sets the level for every site without its own, and **Reset sites** forgets the per-site levels. In private browsing, zoom changes last only for that session and are not saved. TV interfaces (YouTube TV) ignore the default zoom.
+
+**How.** CSS `zoom` on the page's `<html>` (`__sp.zoom`), applied when a page starts, first paints and finishes loading. Unlike WebView's text zoom it enlarges images and buttons too, and unlike page scale it reflows the page to the screen width, so nothing needs sideways panning.
+
+**Where.** `// region Zoom and full-screen fill` (`zoomFor`, `applyZoom`, `setZoom`, `showZoomMenu`, `zoomSettingRow`), `PageZoom.kt`, `Prefs.defaultZoom` / `Prefs.siteZoom`, `page_script.js` (`__sp.zoom`, `__sp.zoomFactor`).
+
+**Limits.** A page can show briefly at 100 % before its level applies. Elements sized with `vh`/`vw` grow with the zoom, so a full-height banner can become taller than the screen. Not available from the phone remote.
 
 ## Auto-unmute
 
@@ -236,7 +246,7 @@ Sections and what they control (`renderSettings`):
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
 | Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
 | Blocklists | Total blocked domains and Update all; built-in filter lists (on/off, count, last update, Update); lists added by address (also Remove); Add a list by address; Never blocked (allowlist) with Allow <current site> and Allow a domain |
-| Browsing | Auto-hide the top bar, Auto-unmute videos, Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
+| Browsing | Auto-hide the top bar, Auto-unmute videos, Default zoom (− / + and Reset sites), Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
 | Updates | Installed version and status, Check now / Update, Check for updates (daily, on by default) |
 
 Settings save as you change them. Closing Settings reloads the page if anything that needs a reload changed.
