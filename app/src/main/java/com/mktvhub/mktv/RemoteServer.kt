@@ -58,14 +58,17 @@ class RemoteServer(private val context: Context, private val listener: Listener)
         server = null
     }
 
-    /** First private IPv4 address of this TV (Wi-Fi or Ethernet). */
+    /** This TV's private IPv4 address on Wi-Fi or Ethernet. A VPN's tunnel address (also private) is never used: phones can't reach it. */
     fun address(): String? = runCatching {
         NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && !it.isLoopback && !it.isVirtual }
+            .filter { it.isUp && !it.isLoopback && !it.isVirtual && !isTunnel(it.name) }
+            .sortedBy { if (it.name.startsWith("wlan") || it.name.startsWith("eth")) 0 else 1 }
             .flatMap { it.inetAddresses.toList() }
             .filterIsInstance<Inet4Address>()
             .firstOrNull { it.isSiteLocalAddress }?.hostAddress
     }.getOrNull()
+
+    private fun isTunnel(name: String) = TUNNEL_PREFIXES.any { name.startsWith(it) }
 
     private fun sameToken(given: String?): Boolean =
         given != null && java.security.MessageDigest.isEqual(given.toByteArray(), token.toByteArray())
@@ -137,6 +140,7 @@ class RemoteServer(private val context: Context, private val listener: Listener)
     }
 
     companion object {
+        private val TUNNEL_PREFIXES = listOf("tun", "ppp", "wg", "ipsec", "vpn", "rmnet", "ccmni", "dummy")
         const val PORT = 8765
         private const val TAG = "RemoteServer"
         private const val ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"

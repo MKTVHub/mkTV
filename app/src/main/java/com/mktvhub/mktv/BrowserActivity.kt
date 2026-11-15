@@ -279,6 +279,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
 
         wv.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
+                val drm = android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID
+                if (drm in request.resources) request.grant(arrayOf(drm)) else request.deny()
+            }
             override fun onProgressChanged(view: WebView, newProgress: Int) {
                 if (view !== webView) return
                 progress.progress = newProgress
@@ -912,7 +916,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val popular = prefs.popular
         findViewById<TextView>(R.id.popularEdit).text = if (editingPopular) "Stop editing" else "Edit"
         findViewById<View>(R.id.popularEmpty).visibility = if (popular.isEmpty() && !editingPopular) View.VISIBLE else View.GONE
-        fillGrid(R.id.popularGrid, popular, height = 160, iconSize = 64, kind = "pop")
+        fillGrid(R.id.popularGrid, popular, height = 104, iconSize = 44, kind = "pop")
         renderPopularAdd(popular)
         arrangeHome()
         fillGrid(R.id.shortcutsGrid, favs, height = 150, iconSize = 56, kind = "fav")
@@ -1064,7 +1068,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = android.view.Gravity.CENTER
-            setPadding(dp(12), dp(12), dp(12), dp(12))
+            val pad = dp(if (kind == "pop") 6 else 12); setPadding(pad, dp(12), pad, dp(12))
         }
         col.addView(siteAvatar(url, title), LinearLayout.LayoutParams(dp(iconSize), dp(iconSize)))
         col.addView(TextView(this).apply {
@@ -1074,9 +1078,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             gravity = android.view.Gravity.CENTER
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(if (kind == "pop") 8 else 10), 0, 0)
+            if (kind == "pop") textSize = 12f
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        col.addView(TextView(this).apply {
+        if (kind != "pop") col.addView(TextView(this).apply {
             text = prettyHost(url)
             setTextColor(0xFF9CA3AF.toInt())
             textSize = 12f
@@ -1095,8 +1100,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                     shape = android.graphics.drawable.GradientDrawable.OVAL
                     setColor(0xFFEF4444.toInt())
                 }
-            }, FrameLayout.LayoutParams((28 * d).toInt(), (28 * d).toInt(), android.view.Gravity.TOP or android.view.Gravity.END).apply {
-                setMargins(0, (8 * d).toInt(), (8 * d).toInt(), 0)
+            }, FrameLayout.LayoutParams(dp(if (kind == "pop") 22 else 28), dp(if (kind == "pop") 22 else 28), android.view.Gravity.TOP or android.view.Gravity.END).apply {
+                setMargins(0, dp(6), dp(6), 0)
             })
         }
         return tile
@@ -1612,8 +1617,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                     prefs.hiddenSections = if (on) prefs.hiddenSections - id else prefs.hiddenSections + id
                 })
             }
-            card.addView(actionRow("Home screen layout", prefs.homeOrder.joinToString(" → ") { sectionName(it) } + ". Change the order with Edit on the home screen.", "Reset") {
-                prefs.homeOrder = Prefs.HOME_SECTIONS; prefs.hiddenSections = emptySet(); renderSettings()
+            card.addView(actionRow("Home screen layout", prefs.homeOrder.joinToString(" → ") { sectionName(it) } + ". Change the order with Edit on the home screen. Reset also restores the Popular sites.", "Reset") {
+                prefs.homeOrder = Prefs.HOME_SECTIONS; prefs.hiddenSections = emptySet(); prefs.popular = Prefs.DEFAULT_POPULAR; renderSettings()
             })
         }
 
@@ -1908,7 +1913,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             hasLocation() && !locationOn() -> "1. Connect your phone to the same Wi-Fi as this TV. Turn on Location in the TV's settings to see its name here."
             else -> "1. Connect your phone to the same Wi-Fi as this TV."
         }
-        findViewById<TextView>(R.id.remoteSteps).text = "$step1\n2. Scan this code with the phone's camera.\n3. Use the remote and keyboard in your phone's browser."
+        // A VPN on the TV often swallows replies to the phone: say so before the user wonders why it won't load.
+        val vpn = cm.allNetworks.any { cm.getNetworkCapabilities(it)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true }
+        findViewById<TextView>(R.id.remoteSteps).text = "$step1\n2. Scan this code with the phone's camera.\n3. Use the remote and keyboard in your phone's browser." +
+            if (vpn) "\n\n⚠ A VPN is on. If the phone can't open the page, allow LAN / local network access in the VPN app, or exclude mkTV from it." else ""
     }
 
     private fun closePhoneRemote() {
@@ -1968,7 +1976,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (ok) qr.setImageBitmap(qrBitmap(WifiQr.text(ssid, pw), dp(240))) else qr.setImageDrawable(null)
         findViewById<View>(R.id.wifiQrEmpty).visibility = if (ok) View.GONE else View.VISIBLE
         findViewById<TextView>(R.id.wifiHint).text = problem
-            ?: "Saved on this TV only, never sent anywhere · Back to close"
+            ?: if (ssid.isEmpty() && hasLocation() && !locationOn()) "Android shows the TV's network name only while Location is on (Settings → Privacy → Location). Or type it."
+            else "Saved on this TV only, never sent anywhere · Back to close"
     }
 
     private val locationRequest = 41

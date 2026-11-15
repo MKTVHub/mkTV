@@ -158,10 +158,13 @@ class Prefs(context: Context) {
         /** Curated Popular row a fresh install starts with. */
         val DEFAULT_POPULAR = listOf(
             "YouTube" to "https://www.youtube.com/tv",
+            "Netflix" to "https://www.netflix.com/",
+            "Prime Video" to "https://www.primevideo.com/",
+            "Disney+" to "https://www.disneyplus.com/",
+            "Spotify" to "https://open.spotify.com/",
             "YouTube Music" to "https://music.youtube.com/",
-            "TikTok" to "https://www.tiktok.com/foryou",
             "Twitch" to "https://www.twitch.tv/",
-            "Dailymotion" to "https://www.dailymotion.com/",
+            "TikTok" to "https://www.tiktok.com/foryou",
         )
         /** Offered as one-press "+ Add" chips while editing Popular (plus any default that was removed). */
         val POPULAR_SUGGESTIONS = listOf(
@@ -171,7 +174,10 @@ class Prefs(context: Context) {
             "Plex" to "https://app.plex.tv/",
             "Kick" to "https://kick.com/",
             "Crunchyroll" to "https://www.crunchyroll.com/",
-            "Spotify" to "https://open.spotify.com/",
+            "Dailymotion" to "https://www.dailymotion.com/",
+            "Apple TV+" to "https://tv.apple.com/",
+            "Max" to "https://play.max.com/",
+            "SoundCloud" to "https://soundcloud.com/",
             "Wikipedia" to "https://www.wikipedia.org/",
         )
         private val DEFAULT_SHORTCUTS = listOf("Google" to "https://www.google.com/")
