@@ -44,7 +44,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `PinPad.kt` | The PIN number pad: a full-screen overlay built in code, 3×4 keys with `nextFocus*` trapping, auto-submit on the 4th digit, set / confirm / change steps, lockout countdown |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
 | `RemoteServer.kt` | Phone remote HTTP server (in progress). Raw `ServerSocket`, one thread per connection, token check, calls back into `BrowserActivity` through `RemoteServer.Listener` |
-| `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used; saves and resumes the Continue watching position under the page's address |
+| `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used; saves and resumes the Continue watching position under the page's address; draws its own D-pad overlay (`activity_player.xml`, `PlayerBar.kt`) instead of Media3's controller |
+| `PlayerUi.kt` | Pure helpers for the player overlay: accelerating seek steps, seek clamping, time labels, "Ends at", title fallback |
 | `ContinueWatching.kt` | Pure Continue watching rules (save, finished, resume offer, cap), labels and JSON; `HomeSections.merge` for the Home section order |
 | `TvHome.kt` | Publishes Continue watching to the system Watch Next ("Play Next") row and a "mkTV" preview channel (with Favourites) on one background thread; skipped without a TV provider |
 | `page_script.js` | Five IIFEs: cosmetic filters and click-trap sweep (plus GPC), jump-mode engine (`window.__sp`), watch-mode video helpers (same object), page zoom and full-screen fill (adds to `__sp`), auto-unmute |
@@ -153,6 +154,8 @@ Back: when the page can't go back and the current kind has more than one tab, `o
 ## Native player
 
 `playNative()` starts `PlayerActivity` with the manifest URL, the page's Referer and Origin for that request, the WebView's user agent and the cookies for that URL. `PlayerActivity` picks DASH for URLs containing `.mpd`, otherwise HLS, and shows an error message if playback fails.
+
+`PlayerView` keeps only the video surface, subtitles and buffering spinner (`useController = false`). `PlayerActivity.dispatchKeyEvent` routes keys: media keys first (from anywhere); with the overlay hidden, any key shows it (◀ ▶ also start a seek, OK also plays/pauses); with the bar focused, ◀ ▶ drive the held-key seek preview (`seekKey`, committed on key-up or in `onStop`) and OK plays/pauses; otherwise normal focus moves between the buttons. `onBackPressed` hides the overlay before finishing.
 
 ## Address bar, voice and updates
 
