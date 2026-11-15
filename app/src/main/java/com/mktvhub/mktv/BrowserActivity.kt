@@ -224,7 +224,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 }
                 if (bypassOnce == url.toString()) { bypassOnce = null; return false }
                 if (request.isForMainFrame && uaFor(url.toString()) != uaFor(view.url)) {
-                    load(url.toString()); return true
+                    // On this view, not load(): a background tab navigating itself must not load into the tab on screen.
+                    view.settings.userAgentString = uaFor(url.toString()); view.loadUrl(url.toString()); return true
                 }
                 if (request.isForMainFrame && prefs.stripTracking) {
                     val clean = HostRules.stripTracking(url.toString())
@@ -476,6 +477,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         updateNav(); updateStar(); updateShield()
         TabPolicy.toClose(tabs.map { it.info() }, t.id).mapNotNull(::tabById).forEach { destroyTab(it); tabs.remove(it) }
         TabPolicy.toDiscard(tabs.map { it.info() }, t.id).mapNotNull(::tabById).forEach(::discardTab)
+        // attach() removed the focused WebView, so focus fell to the toolbar: give the page the remote back.
+        // (Not at startup: the panels overlayOpen() reads aren't set up yet.)
+        if (old != null && old !== t && !overlayOpen()) leaveToPage()
     }
 
     /** Frees the tab's WebView but keeps its address and back/forward list (in memory) for when it is shown again. */
@@ -503,7 +507,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         showTab(newTab(isPrivate))
         closeShortcuts()
         load(url)
-        note("Opened in a new tab · ⋮ → Tabs to switch")
+        note("Opened in a new tab · Tabs")
     }
 
     /** Closes [t]; if it was on screen, the most recently used tab of the same kind comes back. */
