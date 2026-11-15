@@ -89,6 +89,16 @@ class RemoteServer(private val context: Context, private val listener: Listener,
     private fun handle(socket: Socket) = socket.use { sock ->
         sock.soTimeout = 10_000
         val input = BufferedInputStream(sock.getInputStream())
+        // Phone browsers often try https:// first (Chrome's HTTPS-Upgrades / "Always use secure
+        // connections"). This server only speaks plain http on the LAN, so answer a TLS handshake
+        // at once with a fatal TLS alert: the browser sees a clean TLS failure and falls back to
+        // http:// instead of hanging until our read timeout and showing "can't be reached".
+        input.mark(1)
+        if (input.read() == TLS_HANDSHAKE) {
+            runCatching { sock.getOutputStream().apply { write(TLS_ALERT_HANDSHAKE_FAILURE); flush() } }
+            return
+        }
+        input.reset()
         val requestLine = readLine(input) ?: return
         val headers = HashMap<String, String>()
         while (true) {
@@ -178,6 +188,10 @@ class RemoteServer(private val context: Context, private val listener: Listener,
     }
 
     companion object {
+        /** First byte of every TLS record carrying a handshake (a ClientHello). */
+        private const val TLS_HANDSHAKE = 0x16
+        /** TLS 1.0 alert record: fatal (2), handshake_failure (40). */
+        private val TLS_ALERT_HANDSHAKE_FAILURE = byteArrayOf(0x15, 0x03, 0x01, 0x00, 0x02, 0x02, 0x28)
         private val TUNNEL_PREFIXES = listOf("tun", "ppp", "wg", "ipsec", "vpn", "rmnet", "ccmni", "dummy")
         const val PORT = 8765
         private const val TAG = "RemoteServer"

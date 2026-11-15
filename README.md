@@ -129,6 +129,7 @@ adb install -r mkTV.apk
 | 🛡️ **VPN or ad-blocker on the phone** | Pause it, or allow local network access in it. |
 | 📱 **Mobile data** | Turn off "Wi-Fi assist" / "Switch to mobile data" so the phone uses Wi-Fi. |
 | 🔒 **Router isolation** | Some routers block Wi-Fi devices from seeing each other ("AP / client isolation", common on guest networks). Turn it off, or use the main network. |
+| 🔐 **Chrome switches to https://** | mkTV refuses https instantly so Chrome falls back to http. If Chrome shows "This site doesn't support a secure connection", tap **Continue to site**. Still stuck: Chrome **Settings → Privacy and security → Always use secure connections** → off, or "public sites only". |
 | 🔁 **Old link** | The code changes every time mkTV restarts. Scan the QR that's on the TV now; don't reopen an old address from the phone's history. The address starts with `http://`, not `https://`. |
 
 ### Share Wi-Fi doesn't fill in the network name
