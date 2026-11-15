@@ -32,6 +32,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `WebSearch.kt` | Android-free, unit-tested: search engines, address-bar input → URL (`normalize`), OpenSearch suggestion parsing, Favourites/History matches |
 | `History.kt` | Android-free, unit-tested: history list operations (add with de-duplication and cap, remove, retitle), search, day labels, JSON |
 | `Updates.kt` | Android-free, unit-tested: GitHub release parsing, numeric version comparison, once-a-day check |
+| `Downloads.kt` | Android-free, unit-tested: download file names (`Content-Disposition`, URL, MIME), sanitising, sizes, `data:` URL parsing, the Downloads list and its JSON |
+| `DownloadCenter.kt` | WebView downloads: confirm prompt, system `DownloadManager` (page cookies, user agent, Referer), `data:`/`blob:` saving (blob read in the page and copied out in chunks with `evaluateJavascript`), status polling, Open/Remove/Delete, the Downloads panel rows. Private-mode entries stay in memory |
 | `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
 | `RemoteServer.kt` | Phone remote HTTP server (in progress). Raw `ServerSocket`, one thread per connection, token check, calls back into `BrowserActivity` through `RemoteServer.Listener` |
 | `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used |
@@ -86,7 +88,7 @@ While the page is active, `pollRing` runs every 350 ms: it re-reads `__sp.rect()
 10. Jump mode: arrows call `jump(dir)`. The first auto-repeat of ▲/▼ (`repeatCount == 1`) jumps to the site's fixed top or bottom bar once per hold. OK taps the ring centre; with no ring it first picks a start element.
 11. Pointer mode: arrows press/release directions on `CursorView`; OK taps at the pointer.
 
-Back goes through `onBackPressed`: exit page fullscreen, leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close the shield panel, leave home Edit, close home, leave the toolbar, go back in history, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
+Back goes through `onBackPressed`: exit page fullscreen, leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close downloads, close the shield panel, leave home Edit, close home, leave the toolbar, leave the bottom notice, go back in history, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
 
 ### Clicking and scrolling
 
@@ -95,7 +97,7 @@ Back goes through `onBackPressed`: exit page fullscreen, leave the suggestion li
 
 ### Overlays vs page focus
 
-The home screen (`shortcutsPanel`), `settingsPanel`, `historyPanel`, `shieldPanel`, `menuPanel`, the phone remote `remotePanel` and the address-bar `suggestPanel` are native views using standard Android focus. Lists built in code (history rows, suggestions) set explicit `nextFocus*` ids so ▲▼◀▶ stay inside them. `onOverlayChanged(target)` is the single switch:
+The home screen (`shortcutsPanel`), `settingsPanel`, `historyPanel`, `downloadsPanel`, `shieldPanel`, `menuPanel`, the phone remote `remotePanel` and the address-bar `suggestPanel` are native views using standard Android focus. Lists built in code (history rows, download rows, suggestions) set explicit `nextFocus*` ids so ▲▼◀▶ stay inside them. `onOverlayChanged(target)` is the single switch:
 
 - sets `webContainer.descendantFocusability` to `FOCUS_BLOCK_DESCENDANTS` while any overlay is open, so the WebView cannot take focus,
 - keeps the top bar visible while an overlay is open, schedules hiding otherwise,

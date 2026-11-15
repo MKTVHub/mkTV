@@ -16,6 +16,7 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **Smart address bar.** Choose Google, DuckDuckGo, Bing, Brave or Startpage. As you type, it suggests matching Favourites and History pages, plus search suggestions from your engine if you turn them on (off by default, never in private browsing).
 - **Voice search.** Press the mic in the toolbar and say a search or a website.
 - **History.** Every page you've opened, grouped by day, searchable and remote-friendly. Remove single pages or clear it all.
+- **Downloads.** Download files from sites after a quick confirm, follow progress in ⋮ → Downloads, then open them: APKs go to Android's installer, videos play in mkTV. No storage permission needed.
 - **Updates in the app.** When a new release is out, the home screen offers it. One press downloads it from GitHub and opens Android's installer.
 - **YouTube on the TV interface.** The YouTube tile opens YouTube's own TV interface, with the remote passed straight through.
 - **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for real full screen. Videos start with sound.

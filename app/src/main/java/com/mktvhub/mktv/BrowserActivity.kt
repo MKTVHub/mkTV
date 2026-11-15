@@ -278,6 +278,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) = updateNav()
         }
 
+        // Downloads: confirm, then DownloadManager with this WebView's (possibly private) cookies, its user agent and the page as Referer.
+        wv.setDownloadListener { url, ua, disposition, mime, length ->
+            val cookie = if (url.startsWith("http")) runCatching { cookieManagerFor(isPrivate).getCookie(url) }.getOrNull() else null
+            downloads.offer(wv, isPrivate, url, ua, disposition, mime, length, cookie)
+        }
+
         wv.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
                 val drm = android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID
@@ -419,6 +425,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         normal.onResume()
         privateWebView = null
         normalWebView = null
+        downloads.dropPrivate()
         pw.stopLoading()
         pw.clearHistory()
         pw.destroy()
@@ -479,8 +486,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.panelToggle).setOnClickListener { toggleSitePause() }
         findViewById<View>(R.id.snackClose).setOnClickListener { hideSnackbar() }
         findViewById<View>(R.id.snackAction).setOnClickListener {
-            snackUrl?.let { bypassOnce = it; load(it) }
+            val action = snackOnAction
             hideSnackbar()
+            action?.invoke()
         }
         btnStream.setOnClickListener { openStreamPicker() }
         urlField.setOnEditorActionListener { _, actionId, event ->
@@ -511,6 +519,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         hideKeyboard()
         urlField.clearFocus()
         historyPanel.visibility = View.GONE
+        downloadsPanel.visibility = View.GONE
         shortcutsPanel.visibility = View.GONE
         editingShortcuts = false
         editingPopular = false
@@ -747,14 +756,20 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         webView.reload()
     }
 
-    private var snackUrl: String? = null
+    private var snackOnAction: (() -> Unit)? = null
     private val hideSnack = Runnable { hideSnackbar() }
 
     /** Shows what was blocked, with "Open anyway" when there is a URL to open. Any thread. */
     private fun showBlocked(message: String, url: String?) = runOnUiThread {
-        snackUrl = url
+        showSnack(R.drawable.ic_shield_on, message, "Open anyway", url?.let { u -> { bypassOnce = u; load(u) } })
+    }
+
+    /** Bottom notice with an optional action button. ▼ at the bottom of a page (jump mode) reaches the button. */
+    private fun showSnack(icon: Int, message: String, actionLabel: String, action: (() -> Unit)?) {
+        snackOnAction = action
+        findViewById<android.widget.ImageView>(R.id.snackIcon).setImageResource(icon)
         findViewById<TextView>(R.id.snackText).text = message
-        findViewById<View>(R.id.snackAction).visibility = if (url != null) View.VISIBLE else View.GONE
+        findViewById<TextView>(R.id.snackAction).apply { text = actionLabel; visibility = if (action != null) View.VISIBLE else View.GONE }
         if (snackbar.visibility != View.VISIBLE) {
             snackbar.alpha = 0f; snackbar.translationY = 40f
             snackbar.visibility = View.VISIBLE
@@ -766,6 +781,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun hideSnackbar() {
         snackbar.removeCallbacks(hideSnack)
+        if (isInside(snackbar, currentFocus) && !overlayOpen()) onOverlayChanged(null) // hand the remote back to the page
         snackbar.animate().alpha(0f).setDuration(150).withEndAction { snackbar.visibility = View.GONE }.start()
     }
 
@@ -869,6 +885,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         shieldPanel.visibility = View.GONE
         if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
         historyPanel.visibility = View.GONE
+        downloadsPanel.visibility = View.GONE
         editingShortcuts = false
         editingPopular = false
         renderShortcuts()
@@ -1282,6 +1299,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun showHistory() {
         closeMenu()
         shieldPanel.visibility = View.GONE
+        downloadsPanel.visibility = View.GONE
         if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
         confirmClearHistory = false
         findViewById<TextView>(R.id.historyClear).text = "Clear history"
@@ -1399,6 +1417,36 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)))
         return row
+    }
+
+    // ---- Downloads page (logic and rows in DownloadCenter) ----
+
+    private val downloadsPanel: View by lazy { findViewById(R.id.downloadsPanel) }
+    private val downloads: DownloadCenter by lazy {
+        DownloadCenter(this, prefs, downloadsPanel, object : DownloadCenter.Host {
+            override fun note(msg: String) = this@BrowserActivity.note(msg)
+            override fun panelOpen() = downloadsPanel.visibility == View.VISIBLE
+            override fun downloaded(e: Downloads.Entry) {
+                if (downloadsPanel.visibility != View.VISIBLE) showSnack(R.drawable.ic_download, "Downloaded ${e.name}", "Open") { downloads.open(e) }
+            }
+        })
+    }
+
+    private fun showDownloads() {
+        closeMenu()
+        shieldPanel.visibility = View.GONE
+        historyPanel.visibility = View.GONE
+        if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
+        findViewById<android.widget.ScrollView>(R.id.downloadsScroll).scrollTo(0, 0)
+        downloadsPanel.visibility = View.VISIBLE
+        downloads.onPanelShown()
+        onOverlayChanged(downloads.firstFocus())
+    }
+
+    private fun closeDownloads() {
+        if (downloadsPanel.visibility != View.VISIBLE) return
+        downloadsPanel.visibility = View.GONE
+        onOverlayChanged(if (shortcutsPanel.visibility == View.VISIBLE) findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0) ?: findViewById(R.id.homeRemote) else null)
     }
 
     // ---- Updates: GitHub "latest release" check, download, system installer ----
@@ -1560,6 +1608,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         menuPanel.visibility = View.GONE
         shieldPanel.visibility = View.GONE
         historyPanel.visibility = View.GONE
+        downloadsPanel.visibility = View.GONE
         closeShortcuts()
         settingsDirty = false
         confirmClear = false
@@ -1713,6 +1762,11 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 btn.text = "Cleared ✓"
                 settingsDirty = true
             })
+        }
+
+        section(c, "Downloads") { card ->
+            card.addView(actionRow("Downloads", if (android.os.Build.VERSION.SDK_INT >= 29) "Files are saved to the TV's Downloads folder"
+                else "Files are saved in mkTV's own folder on the TV (deleted if you uninstall mkTV)", "Open") { closeSettings(); showDownloads() })
         }
 
         section(c, "Updates") { card ->
@@ -1873,7 +1927,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun overlayOpen() =
         shortcutsPanel.visibility == View.VISIBLE || settingsPanel.visibility == View.VISIBLE ||
             shieldPanel.visibility == View.VISIBLE || menuOpen() || remotePanel.visibility == View.VISIBLE ||
-            historyPanel.visibility == View.VISIBLE || wifiPanel.visibility == View.VISIBLE || suggestOpen()
+            historyPanel.visibility == View.VISIBLE || wifiPanel.visibility == View.VISIBLE || suggestOpen() ||
+            downloadsPanel.visibility == View.VISIBLE
 
     // ---- Phone remote (LAN web page, paired by QR code) ----
 
@@ -2250,6 +2305,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             prefs.desktopMode = !prefs.desktopMode; applyUserAgent(); if (hasPage()) webView.reload(); buildMenu()
         }
         item(R.drawable.ic_history, "History") { showHistory() }
+        item(R.drawable.ic_download, "Downloads") { showDownloads() }
         item(R.drawable.ic_phone, "Phone remote") { showPhoneRemote() }
         item(R.drawable.ic_wifi, "Share Wi-Fi") { showShareWifi() }
         item(R.drawable.ic_delete, "Clear browsing data…") { showClearMenu() }
@@ -2620,6 +2676,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             }
             if (obj.has("edge")) {
                 if (obj.getString("edge") == "up") { showBar(autoHide = false); focusToolbarNear(cursor.ringCenter()?.x ?: root.width / 2f) }
+                // ▼ past the end of the page reaches the bottom notice's button ("Open anyway", "Open").
+                else if (obj.getString("edge") == "down") findViewById<View>(R.id.snackAction).takeIf { snackbar.visibility == View.VISIBLE && it.visibility == View.VISIBLE }?.requestFocus()
                 return@evaluateJavascript
             }
             showRingFor(obj)
@@ -2724,6 +2782,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val overlay = when {
             settingsPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.settingsScroll)
             historyPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.historyScroll)
+            downloadsPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.downloadsScroll)
             shortcutsPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.shortcutsScroll)
             else -> null
         }
@@ -2961,11 +3020,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             watching -> exitWatch()
             settingsPanel.visibility == View.VISIBLE -> closeSettings()
             historyPanel.visibility == View.VISIBLE -> closeHistory()
+            downloadsPanel.visibility == View.VISIBLE -> closeDownloads()
             shieldPanel.visibility == View.VISIBLE -> closeShieldPanel()
             shortcutsPanel.visibility == View.VISIBLE && editingShortcuts -> { editingShortcuts = false; renderShortcuts() }
             shortcutsPanel.visibility == View.VISIBLE && editingPopular -> { editingPopular = false; renderShortcuts(); findViewById<View>(R.id.popularEdit).requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && hasPage() -> closeShortcuts()
             isInside(toolbar, currentFocus) -> leaveToPage()
+            isInside(snackbar, currentFocus) -> hideSnackbar()
             webView.canGoBack() -> webView.goBack()
             SystemClock.uptimeMillis() - lastBackPress < 2000 -> @Suppress("DEPRECATION") super.onBackPressed()
             else -> { lastBackPress = SystemClock.uptimeMillis(); note("Press Back again to exit") }
@@ -3034,11 +3095,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun onStart() {
         super.onStart()
         if (prefs.remoteEnabled) startRemote()
+        downloads.onStart()
     }
 
     override fun onStop() {
         super.onStop()
         remoteServer.stop()
+        downloads.onStop()
     }
 
     override fun onDestroy() {

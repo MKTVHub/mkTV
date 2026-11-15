@@ -385,6 +385,28 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- Downloads: full-screen panel, rows built in DownloadCenter -->
+    <FrameLayout
+        android:id="@+id/downloadsPanel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_marginTop="56dp"
+        android:background="#FF101217"
+        android:clickable="true"
+        android:visibility="gone">
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:paddingStart="160dp" android:paddingTop="28dp" android:paddingEnd="160dp">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Downloads" android:textColor="#FFFFFFFF" android:textSize="28sp" android:textStyle="bold" />
+                <TextView android:id="@+id/downloadsClear" android:layout_width="wrap_content" android:layout_height="40dp" android:layout_marginEnd="10dp" android:background="@drawable/btn_danger" android:clickable="true" android:focusable="true" android:gravity="center" android:paddingStart="18dp" android:paddingEnd="18dp" android:text="Clear list" android:textColor="#FFFCA5A5" android:textSize="15sp" android:textStyle="bold" />
+                <TextView android:layout_width="wrap_content" android:layout_height="40dp" android:clickable="false" android:focusable="false" android:gravity="center_vertical" android:textColor="#FF9CA3AF" android:textSize="14sp" android:text="Back to close" />
+            </LinearLayout>
+            <ScrollView android:id="@+id/downloadsScroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_marginTop="16dp" android:layout_weight="1" android:scrollbars="none">
+                <LinearLayout android:id="@+id/downloadsContent" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingBottom="48dp" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
     <!-- Watch mode: key hints that slide up for a moment, then get out of the way -->
     <LinearLayout
         android:id="@+id/watchDock"
@@ -425,7 +447,7 @@
         android:paddingStart="18dp"
         android:paddingEnd="8dp"
         android:visibility="gone">
-        <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_shield_on" />
+        <ImageView android:id="@+id/snackIcon" android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_shield_on" />
         <TextView android:id="@+id/snackText" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="10dp" android:maxWidth="560dp" android:ellipsize="end" android:singleLine="true" android:textColor="#FFFFFFFF" android:textSize="15sp" />
         <TextView android:id="@+id/snackAction" android:layout_width="wrap_content" android:layout_height="36dp" android:layout_marginStart="16dp" android:background="@drawable/toolbar_button" android:clickable="true" android:focusable="true" android:gravity="center" android:paddingStart="14dp" android:paddingEnd="14dp" android:text="Open anyway" android:textColor="#FFA5B4FC" android:textSize="14sp" android:textStyle="bold" />
         <TextView android:id="@+id/snackClose" android:layout_width="36dp" android:layout_height="36dp" android:layout_marginStart="4dp" android:clickable="true" android:focusable="true" android:gravity="center" android:text="✕" android:textColor="#FF9CA3AF" android:textSize="16sp" />
