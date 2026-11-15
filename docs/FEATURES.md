@@ -26,7 +26,7 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## Auto-hiding top bar
 
-**What.** The toolbar (back, forward, reload, home, address, Watch full screen, shield, ⋮) slides away while you use a page. It comes back on page load, when you press ▲ at the top of the page, when the pointer reaches the top edge, or when any overlay is open.
+**What.** The toolbar (back, forward, reload, home, address, voice search, Watch full screen, shield, ⋮) slides away while you use a page. It comes back on page load, when you press ▲ at the top of the page, when the pointer reaches the top edge, or when any overlay is open.
 
 **Where.** `// ---- Auto-hiding top bar ----` (`showBar`, `scheduleHideBar`, `hideBar`, `canHideBar`). Setting: Settings → Browsing → Auto-hide the top bar.
 
@@ -34,11 +34,11 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## ⋮ menu
 
-**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Desktop site (On / Off), Phone remote, Clear browsing data…, Settings. Phone remote (see below).
+**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Desktop site (On / Off), History, Phone remote, Clear browsing data…, Settings. Phone remote (see below).
 
 **Where.** `buildMenu`, `showClearMenu`, `clearData`.
 
-**Clear browsing data (menu).** Checkboxes for History (back/forward and Recently visited, on by default), Cookies & site data (off by default) and Cached images & files (on by default).
+**Clear browsing data (menu).** Checkboxes for History (back/forward, the History page and Recently visited, on by default), Cookies & site data (off by default) and Cached images & files (on by default).
 
 **Limits.** Saved site icons in `filesDir/icons` are not removed by either clear action.
 
@@ -49,6 +49,8 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 - **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. Edit removes them.
 - **Recently visited:** up to 10 shown (12 stored), one per site, newest first, excluding favourites. Not shown in private mode.
 
+The header has **History** (see below) and **Private browsing** buttons. When a newer mkTV is available, an update card appears at the top (see [In-app updates](#in-app-updates)).
+
 Settings → Start screen can replace it with a fixed home page address.
 
 **How.** Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none.
@@ -56,6 +58,51 @@ Settings → Start screen can replace it with a fixed home page address.
 **Where.** `// region Shortcuts`, `BrowserActivity.POPULAR`, `Prefs.shortcuts`, `Prefs.recent`.
 
 **Limits.** The icon fetch contacts every site on the home screen once, including Popular sites you have never opened (not in private mode). See [PRIVACY.md](PRIVACY.md).
+
+## History
+
+**What.** Every page you open in normal mode, newest first, grouped by day ("Today", "Yesterday", "Monday 3 November"). Open it from ⋮ → History or the **History** button on the home screen. OK opens a page; ▶ moves to its **Remove** button; ▲ from the first row reaches the search field, which filters by words in the title or address as you type (all words must match). **Clear history** (press twice) removes it all, including Recently visited. Back returns to where you came from.
+
+**How.** A revisited address moves to the top instead of appearing twice. The page's real title replaces the first one when the site sets it after loading. Up to 500 pages are kept; the panel shows the newest 150 matches (search to reach older ones). Explicit `nextFocus*` links keep ▲▼ on the rows and ◀▶ between a row and its Remove button, so focus never jumps to the toolbar.
+
+**Where.** `History.kt` (pure: add, remove, retitle, search, day labels, JSON), `Prefs.history` (its own `SharedPreferences` file `history`, cached in memory), `// ---- History page ----` in `BrowserActivity` (`showHistory`, `renderHistory`, `historyRow`), recorded in `rememberRecent` and `onReceivedTitle`.
+
+**Limits.** Not recorded in private mode. Single-page apps that change the address without loading a page (for example YouTube's TV interface) are recorded once, at the page load.
+
+## Address bar: search engine and suggestions
+
+**What.** Text that isn't an address is searched with the engine chosen in Settings → Search: Google (default), DuckDuckGo, Bing, Brave or Startpage. While you type, a list under the address bar offers:
+- the typed text itself ("Search Google" or "Open address"),
+- up to three matching Favourites (★) and History pages (clock), always, on the TV only,
+- up to five search suggestions from the engine, only if **Search suggestions** is on (off by default, and never in private browsing). While it's off, the list ends with a "Show suggestions as you type" row that says what it sends and turns it on.
+
+With the on-screen keyboard open, Back closes the keyboard and ▼ then moves into the list (the list says so). With the phone remote's keyboard there is no on-screen keyboard, so ▼ goes straight in. ▲ from the first row returns to the address field; Back closes the list.
+
+**How.** Only edits made while the address field has focus trigger the list (page loads set the text without focus). Each keystroke is debounced by 200 ms; the engine request runs on one background thread with a 3 s timeout, carries no cookies, and an answer for an older keystroke is dropped. Addresses are never sent for suggestions. All engines answer in the OpenSearch JSON format.
+
+**Where.** `WebSearch.kt` (pure: engines, `normalize`, `looksLikeUrl`, `parseSuggestions`, `localMatches`), `normalizeInput`, `// ---- Address-bar suggestions ----` in `BrowserActivity` (`updateSuggestions`, `renderSuggestions`, `hideSuggestions`, `submitAddress`), `Prefs.searchEngine`, `Prefs.searchSuggestions`.
+
+**Limits.** Gboard on Android TV keeps the D-pad while it is open (▲ only reaches its own word strip), so picking a suggestion takes Back first. Engine suggestions depend on the engines' public suggestion endpoints, which can change or rate-limit.
+
+## Voice search
+
+**What.** The microphone button in the toolbar (and the remote's Search key, on remotes where the system passes it to apps) opens the TV's speech recogniser. What you say is opened as an address or searched with your engine. If a text field in mkTV has focus (History search, Add a favourite), the words are typed there instead.
+
+**How.** `RecognizerIntent.ACTION_RECOGNIZE_SPEECH` with the web-search language model. The button only appears if the TV has a recogniser (a `<queries>` entry in the manifest makes it visible to the app on Android 11+). mkTV never records audio itself and needs no microphone permission.
+
+**Where.** `// ---- Voice search ----` in `BrowserActivity` (`voiceAvailable`, `startVoice`, `onActivityResult`), `KEYCODE_SEARCH` in `dispatchKeyEvent`.
+
+**Limits.** On Google TV the remote's Assistant/mic button is normally handled by the system (Google Assistant) rather than passed to apps; use the toolbar button. Voice can't type into fields inside web pages yet. Speech is processed by the TV's recogniser (on Google TV, Google's speech service), not by mkTV.
+
+## In-app updates
+
+**What.** Once a day at launch, mkTV asks GitHub for the latest release. If it's newer than the installed version, the home screen shows a card: "mkTV 1.2.0 is available" with **Update** and **Later**. Update downloads `mkTV.apk` (progress on the button) and opens Android's installer, which asks you to confirm. Later hides the card until the next version. Settings → Updates shows the status, has **Check now** / **Update**, and a switch to turn the daily check off.
+
+**How.** `GET https://api.github.com/repos/MKTVHub/mkTV/releases/latest`; drafts, pre-releases and releases without a `mkTV.apk` asset are ignored. Versions are compared numerically (`1.0.10` > `1.0.9`). The result is cached, so the card shows on later launches without another request. Failures are silent (no card) and don't use up the day's check unless GitHub answered. The download goes to the app's cache (`cache/updates/`), must match the asset's size, and must be signed with the same key as the installed app (otherwise mkTV explains why Android would refuse it). It is shared with the installer through a `FileProvider`. If mkTV isn't yet allowed to install apps, it opens that setting first (`REQUEST_INSTALL_PACKAGES`).
+
+**Where.** `Updates.kt` (pure: `parseVersion`, `isNewer`, `due`, `parseRelease`), `// ---- Updates ... ----` in `BrowserActivity` (`checkForUpdate`, `renderUpdateCard`, `startUpdate`, `installUpdate`, `signedLikeThisApp`), `Prefs.updateCheck`, `lastUpdateCheck`, `latestRelease`, `dismissedUpdate`, `res/xml/file_paths.xml`. Debug builds accept `--es debug_version 1.0.0` on the launch intent to pretend to be older, for testing the card.
+
+**Limits.** Debug or self-built copies are signed with a different key, so they can't update to an MKTVHub release in place. Builds installed from an app store should leave updates to the store (the check can be turned off).
 
 ## YouTube TV interface
 
@@ -157,16 +204,18 @@ Sections and what they control (`renderSettings`):
 |---|---|
 | Navigation | Jump between items / Mouse pointer |
 | Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`) |
+| Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
 | Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
 | Blocklist | Host count and last update, Update now, Extra blocklist URL (default StevenBlack, build-time `DEFAULT_BLOCKLIST_URL`) |
 | Browsing | Auto-hide the top bar, Auto-unmute videos, Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
+| Updates | Installed version and status, Check now / Update, Check for updates (daily, on by default) |
 
 Settings save as you change them. Closing Settings reloads the page if anything that needs a reload changed.
 
 ## Other behaviour
 
-- **Address bar:** text without a scheme becomes `https://…` if it looks like a host, otherwise a Google search.
+- **Address bar:** text without a scheme becomes `https://…` if it looks like a host, otherwise a search with the chosen engine (see above).
 - **Desktop site:** switches the user agent to desktop Chrome on Windows.
 - **Open a URL from another app or adb:** an intent with a data URI loads it.
 - **Exit:** Back on the first page asks "Press Back again to exit".

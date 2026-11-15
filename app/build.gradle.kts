@@ -63,4 +63,6 @@ dependencies {
     implementation("androidx.media3:media3-ui:$media3")
     implementation("com.google.zxing:core:3.5.3")
     testImplementation("junit:junit:4.13.2")
+    // Real org.json for JVM tests (the Android jar only has stubs); the app uses the platform copy.
+    testImplementation("org.json:json:20240303")
 }

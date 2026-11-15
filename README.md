@@ -4,11 +4,19 @@
 
 mkTV turns the D-pad into a fast way to use any website: the highlight jumps from link to link like a TV app, videos take over the remote when they play, and ads, pop-ups and hostile redirects are blocked by default. It runs on Android TV and Google TV today, with Fire TV, LG webOS and Samsung Tizen on the [roadmap](docs/ROADMAP.md).
 
+[![Watch mkTV in 30 seconds](docs/screenshots/promo-poster.jpg)](https://mktvhub.github.io/assets/mktv-promo.mp4)
+
+<p align="center"><a href="https://mktvhub.github.io/assets/mktv-promo.mp4">▶ Watch mkTV in 30 seconds</a> · <a href="https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk">⬇ Download the APK</a> · <a href="https://mktvhub.github.io">mktvhub.github.io</a></p>
+
 ## Features
 
 - **Jump navigation.** ▲▼◀▶ move a highlight between links and buttons; OK clicks, hold OK to long-press. Hold ▼ or ▲ to jump to a site's fixed bottom or top bar. Prefer a mouse? Switch to **pointer mode**.
 - **Out of the way.** The top bar hides while you browse and comes back when you need it.
 - **Home screen.** Popular sites, your Favourites and Recently visited, one press away.
+- **Smart address bar.** Choose Google, DuckDuckGo, Bing, Brave or Startpage. As you type, it suggests matching Favourites and History pages, plus search suggestions from your engine if you turn them on (off by default, never in private browsing).
+- **Voice search.** Press the mic in the toolbar and say a search or a website.
+- **History.** Every page you've opened, grouped by day, searchable and remote-friendly. Remove single pages or clear it all.
+- **Updates in the app.** When a new release is out, the home screen offers it. One press downloads it from GitHub and opens Android's installer.
 - **YouTube on the TV interface.** The YouTube tile opens YouTube's own TV interface, with the remote passed straight through.
 - **Watch mode.** When a big video plays, the remote controls it: seek, pause, next/previous in vertical feeds, ▼ for real full screen. Videos start with sound.
 - **Native player.** If a page plays an HLS or DASH stream, **Watch full screen** opens it in a native player that is smoother on TV hardware.
@@ -37,11 +45,13 @@ Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 | | ▼ / ▲ | Full screen / leave full screen (normal video) |
 | | Back | Browse the page again |
 | YouTube TV | All keys | Go to YouTube; **hold Back** for the mkTV home screen |
-| Anywhere | Back | Close what's open, go back, press twice to exit |
+| Address bar | ▼ | Move into the suggestions (press Back first to close the on-screen keyboard) |
+| Anywhere | Search (if the remote has it) | Voice search |
+| | Back | Close what's open, go back, press twice to exit |
 
 ## Install
 
-**From a release:** download [`mkTV.apk`](https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk) from the [latest release](https://github.com/MKTVHub/mkTV/releases/latest) and install it with `adb install mkTV.apk` or a side-loading app (for example Downloader or Send Files to TV). Release APKs are signed by MKTVHub; the certificate SHA-256 is `16:45:35:90:AA:A7:BD:7E:86:EC:B1:BD:E8:CC:8E:B9:AE:66:F3:30:CB:7C:BE:DC:72:3D:5F:3A:E5:BE:B7:FD`.
+**From a release:** download [`mkTV.apk`](https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk) from the [latest release](https://github.com/MKTVHub/mkTV/releases/latest) and install it with a side-loading app (for example Downloader or Send Files to TV), or [from a computer over Wi-Fi](#install-from-a-computer-over-wi-fi). Release APKs are signed by MKTVHub; the certificate SHA-256 is `16:45:35:90:AA:A7:BD:7E:86:EC:B1:BD:E8:CC:8E:B9:AE:66:F3:30:CB:7C:BE:DC:72:3D:5F:3A:E5:BE:B7:FD`.
 
 **From source** (JDK 17, Android SDK 35):
 
@@ -55,6 +65,58 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 The app appears on the TV home screen as **mkTV**. Package: `com.mktvhub.mktv`. Requires Android 7.0 (API 24) or newer.
 
 Build-time defaults in `app/build.gradle.kts`: `DEFAULT_HOME_URL` (home page address, `https://www.google.com`) and `DEFAULT_BLOCKLIST_URL` (StevenBlack unified hosts). Both can be changed in Settings.
+
+## Install from a computer over Wi-Fi
+
+No USB cable and no Play Store needed. You need a computer on the same Wi-Fi as the TV, with [Android platform-tools](https://developer.android.com/tools/releases/platform-tools) (`adb`) installed: on a Mac `brew install android-platform-tools`, on Windows `winget install Google.PlatformTools`.
+
+### 1 · Unlock Developer options *(once)*
+
+> **Settings → System → About** → select **Android TV OS build** and press **OK 7 times**
+>
+> ✅ *"You are now a developer"*
+
+<sub>Older Android TV: **Settings → Device Preferences → About → Build**.</sub>
+
+### 2 · Turn on debugging
+
+> **Settings → System → Developer options**
+>
+> 🔘 **USB debugging** → On
+> 🔘 **Wireless debugging** → On → **Allow**
+
+<sub>No "Wireless debugging" (Android 10 or older)? Turn on **Network debugging** or just **USB debugging**, then skip to step 4 and use port `5555`.</sub>
+
+### 3 · Pair the computer *(once)*
+
+> **Wireless debugging → Pair device with pairing code**
+>
+> The TV shows an address like `192.168.0.5:37123` and a 6-digit code.
+
+```sh
+adb pair 192.168.0.5:37123      # type the 6-digit code when asked
+```
+
+### 4 · Connect
+
+> Back on the **Wireless debugging** screen, note **IP address & Port** (a different port from step 3).
+
+```sh
+adb connect 192.168.0.5:41099
+```
+
+### 5 · Install mkTV
+
+```sh
+curl -LO https://github.com/MKTVHub/mkTV/releases/latest/download/mkTV.apk
+adb install -r mkTV.apk
+```
+
+> If the TV asks **"Allow debugging?"** → tick **Always allow** → **OK**.
+>
+> ✅ **mkTV** appears in the TV's apps row. Updates after this happen inside the app (⋮ → About mkTV).
+
+<sub>Done? You can switch **Wireless debugging** off again. Pairing is remembered for next time.</sub>
 
 ## Screenshots
 

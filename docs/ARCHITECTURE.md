@@ -9,7 +9,8 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | BrowserActivity (native shell)                              |
 |                                                             |
 |  topBar/toolbar   shieldPanel   menuPanel   shortcutsPanel  |
-|  settingsPanel    snackbar      watchDock   watchFlash      |
+|  settingsPanel    historyPanel  suggestPanel  snackbar      |
+|  watchDock        watchFlash                                |
 |                                                             |
 |  webContainer ── WebView (normal)  or  WebView (private)    |
 |                   │  page_script.js  (every page)           |
@@ -19,6 +20,7 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 +-------------------------------------------------------------+
         │ uses                         │ starts
    Prefs, AdBlocker, HostRules     PlayerActivity (Media3 ExoPlayer)
+   WebSearch, History, Updates     system speech recogniser, package installer
 ```
 
 | File | Responsibility |
@@ -27,7 +29,10 @@ mkTV is a single-module Android app (`:app`, package `com.mktvhub.mktv`). It is 
 | `CursorView.kt` | A non-focusable `View` on top of everything. Pointer mode: draws an arrow, moves it on a `Choreographer` loop with acceleration, reports edge pushes for scrolling, auto-hides after 6 s. Jump mode: draws a rounded focus ring around a rectangle |
 | `AdBlocker.kt` | Builds the blocked host set from `assets/adhosts.txt` plus a downloaded hosts file cached at `filesDir/remote_hosts.txt`. The set is swapped atomically (`@Volatile`) so WebView's network threads can read it |
 | `HostRules.kt` | Android-free helpers, unit-tested: `isBlocked` (host or any parent domain), `siteOf` (approximate registrable domain), `sameSite`, `parseHosts`, `isStreamUrl`, `isVariantOf`, `stripTracking` |
-| `Prefs.kt` | All persisted settings and lists in one `SharedPreferences` file named `browser` |
+| `WebSearch.kt` | Android-free, unit-tested: search engines, address-bar input → URL (`normalize`), OpenSearch suggestion parsing, Favourites/History matches |
+| `History.kt` | Android-free, unit-tested: history list operations (add with de-duplication and cap, remove, retitle), search, day labels, JSON |
+| `Updates.kt` | Android-free, unit-tested: GitHub release parsing, numeric version comparison, once-a-day check |
+| `Prefs.kt` | All persisted settings and lists in the `SharedPreferences` file `browser`; history in its own file `history` (cached in memory) |
 | `RemoteServer.kt` | Phone remote HTTP server (in progress). Raw `ServerSocket`, one thread per connection, token check, calls back into `BrowserActivity` through `RemoteServer.Listener` |
 | `PlayerActivity.kt` | Plays one HLS or DASH URL with ExoPlayer, forwarding the Referer, Origin, Cookie and User-Agent the page used |
 | `page_script.js` | Four IIFEs: cosmetic filters and click-trap sweep (plus GPC), jump-mode engine (`window.__sp`), watch-mode video helpers (same object), auto-unmute |
@@ -70,17 +75,18 @@ While the page is active, `pollRing` runs every 350 ms: it re-reads `__sp.rect()
 `BrowserActivity.dispatchKeyEvent`, first match wins:
 
 1. Soft keyboard visible: default handling.
-2. `!pageActive()` (focus in the toolbar, an overlay, the snackbar or an `EditText`): default TV focus navigation. ▼ from the address field or a toolbar button calls `leaveToPage()`.
-3. The page is showing its own fullscreen view (`customView != null`): `handleMediaKey`, then `handleWatchKey` if watching.
-4. Fullscreen and jump mode: OK becomes a tap at the screen centre; other keys go to the player.
-5. YouTube TV interface (`siteRemote`, i.e. `youtube.com/tv*`): `handleSiteRemote` forwards arrows, OK and media keys to the WebView unchanged. Back: short press sends Escape to the page, long press opens the mkTV home screen. Menu falls through.
-6. `handleMediaKey`: play/pause, FF/REW (±10 s), next/previous (feed step) on any page with a video.
-7. `handleWatchKey` when watching.
-8. Menu or Bookmark key: toggle the ⋮ menu (on key up). Channel ± and Page Up/Down: scroll.
-9. Jump mode: arrows call `jump(dir)`. The first auto-repeat of ▲/▼ (`repeatCount == 1`) jumps to the site's fixed top or bottom bar once per hold. OK taps the ring centre; with no ring it first picks a start element.
-10. Pointer mode: arrows press/release directions on `CursorView`; OK taps at the pointer.
+2. Menu / Bookmark toggles the ⋮ menu and Search starts voice search, from anywhere.
+3. `!pageActive()` (focus in the toolbar, an overlay, the snackbar or an `EditText`): default TV focus navigation. ▼ from the address field moves into the suggestion list when it is showing; otherwise ▼ from the address field or a toolbar button calls `leaveToPage()`.
+4. The page is showing its own fullscreen view (`customView != null`): `handleMediaKey`, then `handleWatchKey` if watching.
+5. Fullscreen and jump mode: OK becomes a tap at the screen centre; other keys go to the player.
+6. YouTube TV interface (`siteRemote`, i.e. `youtube.com/tv*`): `handleSiteRemote` forwards arrows, OK and media keys to the WebView unchanged. Back: short press sends Escape to the page, long press opens the mkTV home screen.
+7. `handleMediaKey`: play/pause, FF/REW (±10 s), next/previous (feed step) on any page with a video.
+8. `handleWatchKey` when watching.
+9. Channel ± and Page Up/Down: scroll.
+10. Jump mode: arrows call `jump(dir)`. The first auto-repeat of ▲/▼ (`repeatCount == 1`) jumps to the site's fixed top or bottom bar once per hold. OK taps the ring centre; with no ring it first picks a start element.
+11. Pointer mode: arrows press/release directions on `CursorView`; OK taps at the pointer.
 
-Back goes through `onBackPressed`: exit page fullscreen, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close the shield panel, leave home Edit, close home, leave the toolbar, go back in history, then "Press Back again to exit".
+Back goes through `onBackPressed`: exit page fullscreen, leave the suggestion list (to the address field) or close it, close the phone remote panel, leave the clear-data submenu, close the menu, leave theater, leave watch mode, close settings, close history, close the shield panel, leave home Edit, close home, leave the toolbar, go back in history, then "Press Back again to exit". While the on-screen keyboard is open, the keyboard takes Back first and closes itself.
 
 ### Clicking and scrolling
 
@@ -89,7 +95,7 @@ Back goes through `onBackPressed`: exit page fullscreen, close the phone remote 
 
 ### Overlays vs page focus
 
-The home screen (`shortcutsPanel`), `settingsPanel`, `shieldPanel`, `menuPanel` and the phone remote `remotePanel` are native views using standard Android focus. `onOverlayChanged(target)` is the single switch:
+The home screen (`shortcutsPanel`), `settingsPanel`, `historyPanel`, `shieldPanel`, `menuPanel`, the phone remote `remotePanel` and the address-bar `suggestPanel` are native views using standard Android focus. Lists built in code (history rows, suggestions) set explicit `nextFocus*` ids so ▲▼◀▶ stay inside them. `onOverlayChanged(target)` is the single switch:
 
 - sets `webContainer.descendantFocusability` to `FOCUS_BLOCK_DESCENDANTS` while any overlay is open, so the WebView cannot take focus,
 - keeps the top bar visible while an overlay is open, schedules hiding otherwise,
@@ -125,11 +131,18 @@ Release builds add `FLAG_SECURE` while private.
 
 `playNative()` starts `PlayerActivity` with the manifest URL, the page's Referer and Origin for that request, the WebView's user agent and the cookies for that URL. `PlayerActivity` picks DASH for URLs containing `.mpd`, otherwise HLS, and shows an error message if playback fails.
 
+## Address bar, voice and updates
+
+- `normalizeInput` → `WebSearch.normalize` with the engine from `Prefs.searchEngine`, then `HostRules.stripTracking`. Every address-bar path (typed, suggestion, voice, phone remote `/api/open`, intents, home page) goes through it and `load()`.
+- Suggestions: a `TextWatcher` on `urlField` (only while it has focus) debounces to `updateSuggestions`, which renders local matches at once and asks the engine on a single-thread executor, dropping stale answers by a generation counter.
+- Voice: `startActivityForResult(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)`; the result goes to the focused app text field or through `submitAddress`.
+- Updates: `checkForUpdate` 4 s after launch (daily), `startUpdate` downloads to `cache/updates/`, `installUpdate` checks the signer, the install permission, then starts `ACTION_VIEW` with a `FileProvider` URI (authority `com.mktvhub.mktv.files`).
+
 ## Threads
 
 - WebView network callbacks: read `@Volatile` fields (`pageHost`, `protectionOn`, `bypassOnce`), atomic counters, `CopyOnWriteArrayList` for streams.
 - `AdBlocker.load` runs on its own thread and swaps the set when ready (bundled list first, then cached, then downloaded).
-- Favicon fetches run on a background thread.
+- Favicon fetches, the update check and the update download run on background threads; search suggestions on a single-thread executor.
 - Everything else is on the UI thread.
 
 ## Phone remote (in progress)

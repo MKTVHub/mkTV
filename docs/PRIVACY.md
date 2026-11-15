@@ -8,16 +8,19 @@ In normal mode, in the app's private storage (`/data/data/com.mktvhub.mktv`):
 
 | Data | Where | Cleared by |
 |---|---|---|
-| Settings (home page, toggles, navigation mode, blocklist URL) | `SharedPreferences` file `browser` | Uninstall / Android "Clear storage" |
+| Settings (home page, toggles, navigation mode, blocklist URL, search engine) | `SharedPreferences` file `browser` | Uninstall / Android "Clear storage" |
 | Favourites (title + URL) | same | Removing them on the home screen (Edit) |
 | Recently visited (up to 12 entries: title + URL, one per site) | same | Clear browsing data (History) |
+| History (up to 500 entries: title, URL, time) | `SharedPreferences` file `history` | Clear browsing data (History, or Settings → Browsing), History → Clear history, Remove on a row |
+| Update check result (latest version number, its download URL and size, time of the last check, a version you chose "Later" for) | `SharedPreferences` file `browser` | Uninstall / "Clear storage" |
+| A downloaded update (`mkTV-<version>.apk`) | `cache/updates/` | Replaced by the next download; Android may clear app caches |
 | Sites where blocking is paused | same | Settings → Protection → Resume |
 | All-time blocked count | same | Uninstall |
 | Site icons (one PNG per site you visited or saved, and for the Popular tiles) | `files/icons/` | Uninstall / "Clear storage" only |
 | Downloaded blocklist | `files/remote_hosts.txt` | Replaced on refresh |
 | Cookies, cache, local storage, IndexedDB, back/forward history | WebView's own storage | Clear browsing data |
 
-`android:allowBackup` is currently `true`, so Android's device backup may include the settings file with favourites and recents.
+`android:allowBackup` is currently `true`, so Android's device backup may include the settings and history files with favourites, recents and history.
 
 ## What is sent over the network
 
@@ -26,8 +29,13 @@ mkTV itself only makes these requests. Everything else is the web pages you open
 1. **Blocklist download.** At app start, if the cached copy is over a day old (or when you press Update now), mkTV downloads the hosts file from the Blocklist URL. Default: `https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts` (GitHub sees your IP address). Clear the URL in Settings → Blocklist to turn this off.
 2. **Site icons.** For home-screen tiles without an icon, mkTV requests `https://<site>/apple-touch-icon.png` and then `https://<site>/favicon.ico`, once per site per app session, with the WebView user agent. This includes the Popular tiles, even if you have never opened those sites. Not done in private mode.
 3. **The native player.** "Watch full screen" requests the stream directly, sending the Referer, Origin and cookies the page used for that stream, and the WebView user agent.
+4. **Update check.** Once a day at launch (and when you press Check now), mkTV requests `https://api.github.com/repos/MKTVHub/mkTV/releases/latest` with the user agent `mkTV/<version>`. GitHub sees your IP address and the mkTV version. Nothing about your browsing is sent. Turn it off in Settings → Updates → Check for updates. In private mode it still runs, since it carries nothing from the session.
+5. **Update download.** Only when you press Update: mkTV downloads `mkTV.apk` from the GitHub release (GitHub redirects to its download servers).
+6. **Search suggestions (off by default).** When you turn on Settings → Search → Search suggestions, what you type in the address bar is sent to the chosen engine's suggestion service as you type, without cookies and with the WebView user agent: Google (`suggestqueries.google.com`), DuckDuckGo (`duckduckgo.com/ac`), Bing (`api.bing.com`), Brave (`search.brave.com/api/suggest`) or Startpage (`www.startpage.com/osuggestions`). Text that looks like an address is never sent, and nothing is sent in private browsing. Suggestions from your own Favourites and History are matched on the TV and send nothing.
 
-Address-bar text that is not a URL is sent to Google Search (`https://www.google.com/search?q=...`).
+Address-bar text that is not a URL is searched with the engine you chose in Settings → Search (default Google: `https://www.google.com/search?q=...`).
+
+**Voice search** uses the TV's own speech recogniser through Android's standard voice input screen. mkTV doesn't record audio and has no microphone permission. On Google TV the recogniser is Google's speech service, so what you say is processed under Google's terms, as with the TV's own voice search.
 
 What pages receive from mkTV beyond a normal browser:
 

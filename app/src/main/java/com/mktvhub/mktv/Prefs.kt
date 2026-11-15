@@ -4,6 +4,8 @@ import android.content.Context
 
 class Prefs(context: Context) {
     private val p = context.getSharedPreferences("browser", Context.MODE_PRIVATE)
+    /** Separate file so the (large, frequently rewritten) history doesn't slow every other setting. */
+    private val h = context.getSharedPreferences("history", Context.MODE_PRIVATE)
 
     var homeUrl: String
         get() = p.getString("home_url", null) ?: BuildConfig.DEFAULT_HOME_URL
@@ -17,6 +19,17 @@ class Prefs(context: Context) {
     var blockRedirects: Boolean
         get() = p.getBoolean("block_redirects", true)
         set(v) = p.edit().putBoolean("block_redirects", v).apply()
+    /** Share Wi-Fi: kept only on this TV (app-private storage) so it needn't be retyped. */
+    var wifiSsid: String
+        get() = p.getString("wifi_ssid", "") ?: ""
+        set(v) = p.edit().putString("wifi_ssid", v).apply()
+    var wifiPassword: String
+        get() = p.getString("wifi_password", "") ?: ""
+        set(v) = p.edit().putString("wifi_password", v).apply()
+    /** Phone remote asks once for the permission that reveals the Wi-Fi name; never nags again. */
+    var askedWifiName: Boolean
+        get() = p.getBoolean("asked_wifi_name", false)
+        set(v) = p.edit().putBoolean("asked_wifi_name", v).apply()
     var desktopMode: Boolean
         get() = p.getBoolean("desktop_mode", false)
         set(v) = p.edit().putBoolean("desktop_mode", v).apply()
@@ -32,6 +45,30 @@ class Prefs(context: Context) {
             v.forEach { (t, u) -> arr.put(org.json.JSONObject().put("title", t).put("url", u)) }
             p.edit().putString("shortcuts", arr.toString()).apply()
         }
+
+    /** The home screen's Popular row; the user can remove sites and add others. */
+    var popular: List<Pair<String, String>>
+        get() {
+            val raw = p.getString("popular", null) ?: return DEFAULT_POPULAR
+            val arr = org.json.JSONArray(raw)
+            return (0 until arr.length()).map { arr.getJSONObject(it).let { o -> o.getString("title") to o.getString("url") } }
+        }
+        set(v) {
+            val arr = org.json.JSONArray()
+            v.forEach { (t, u) -> arr.put(org.json.JSONObject().put("title", t).put("url", u)) }
+            p.edit().putString("popular", arr.toString()).apply()
+        }
+
+    /** Home screen section order, e.g. "fav,pop,rec"; unknown or missing ids fall back to the default order. */
+    var homeOrder: List<String>
+        get() {
+            val saved = p.getString("home_order", null)?.split(',').orEmpty().filter { it in HOME_SECTIONS }
+            return (saved + HOME_SECTIONS).distinct()
+        }
+        set(v) = p.edit().putString("home_order", v.joinToString(",")).apply()
+    var hiddenSections: Set<String>
+        get() = p.getStringSet("hidden_sections", emptySet())!!.toSet()
+        set(v) = p.edit().putStringSet("hidden_sections", v).apply()
 
     /** Start on (and ⌂ goes to) the shortcuts grid instead of [homeUrl]. */
     var startWithShortcuts: Boolean
@@ -81,7 +118,62 @@ class Prefs(context: Context) {
         get() = p.getString("blocklist_url", null) ?: BuildConfig.DEFAULT_BLOCKLIST_URL
         set(v) = p.edit().putString("blocklist_url", v.trim()).apply()
 
-    private companion object {
-        val DEFAULT_SHORTCUTS = listOf("Google" to "https://www.google.com/")
+    /** Full browsing history, newest first (normal mode only, capped at [History.MAX]). */
+    var history: List<History.Entry>
+        get() = historyCache ?: History.fromJson(h.getString("entries", null)).also { historyCache = it }
+        set(v) { historyCache = v; h.edit().putString("entries", History.toJson(v)).apply() }
+    /** Parsed once; read on every keystroke in the address bar. */
+    private var historyCache: List<History.Entry>? = null
+
+    /** [WebSearch.Engine.id] used for address-bar searches and suggestions. */
+    var searchEngine: String
+        get() = p.getString("search_engine", null) ?: "google"
+        set(v) = p.edit().putString("search_engine", v).apply()
+    /** Off by default: suggestions send what you type to the search engine. Never used in private mode. */
+    var searchSuggestions: Boolean
+        get() = p.getBoolean("search_suggestions", false)
+        set(v) = p.edit().putBoolean("search_suggestions", v).apply()
+
+    /** Daily check of the GitHub "latest release" for a newer mkTV. */
+    var updateCheck: Boolean
+        get() = p.getBoolean("update_check", true)
+        set(v) = p.edit().putBoolean("update_check", v).apply()
+    var lastUpdateCheck: Long
+        get() = p.getLong("last_update_check", 0)
+        set(v) = p.edit().putLong("last_update_check", v).apply()
+    /** Newest release seen by the last check, kept so the home card shows without a new request. */
+    var latestRelease: Updates.Release?
+        get() {
+            val v = p.getString("latest_version", null) ?: return null
+            return Updates.Release(v, p.getString("latest_apk_url", null) ?: return null, p.getLong("latest_apk_size", 0))
+        }
+        set(r) = p.edit().putString("latest_version", r?.version).putString("latest_apk_url", r?.apkUrl).putLong("latest_apk_size", r?.size ?: 0).apply()
+    /** Version whose home-screen card the user dismissed with "Later". */
+    var dismissedUpdate: String?
+        get() = p.getString("dismissed_update", null)
+        set(v) = p.edit().putString("dismissed_update", v).apply()
+
+    companion object {
+        val HOME_SECTIONS = listOf("pop", "fav", "rec")
+        /** Curated Popular row a fresh install starts with. */
+        val DEFAULT_POPULAR = listOf(
+            "YouTube" to "https://www.youtube.com/tv",
+            "YouTube Music" to "https://music.youtube.com/",
+            "TikTok" to "https://www.tiktok.com/foryou",
+            "Twitch" to "https://www.twitch.tv/",
+            "Dailymotion" to "https://www.dailymotion.com/",
+        )
+        /** Offered as one-press "+ Add" chips while editing Popular (plus any default that was removed). */
+        val POPULAR_SUGGESTIONS = listOf(
+            "Vimeo" to "https://vimeo.com/",
+            "Pluto TV" to "https://pluto.tv/",
+            "Tubi" to "https://tubitv.com/",
+            "Plex" to "https://app.plex.tv/",
+            "Kick" to "https://kick.com/",
+            "Crunchyroll" to "https://www.crunchyroll.com/",
+            "Spotify" to "https://open.spotify.com/",
+            "Wikipedia" to "https://www.wikipedia.org/",
+        )
+        private val DEFAULT_SHORTCUTS = listOf("Google" to "https://www.google.com/")
     }
 }

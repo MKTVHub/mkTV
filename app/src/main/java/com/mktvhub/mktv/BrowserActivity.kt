@@ -115,11 +115,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         hideSystemBars()
         setupWebView()
         setupShortcuts()
+        setupHistory()
         setupSettings()
         setupToolbar()
         cursor.onEdgeScroll = ::scrollAtCursor
         cursor.onMove = { _, y -> if (y < topBar.height) showBar(autoHide = false) else if (barShown) scheduleHideBar(1500) }
         root.viewTreeObserver.addOnGlobalFocusChangeListener { _, now ->
+            if (suggestOpen() && !renderingSuggestions && now !== urlField && !isInside(suggestPanel, now)) hideSuggestions()
             refreshCursor()
             if (isInside(toolbar, now) || overlayOpen()) showBar(autoHide = false)
         }
@@ -135,6 +137,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         webView.isFocusableInTouchMode = true
         urlField.clearFocus()
         if (!overlayOpen()) webView.requestFocus()
+        // After the first page has had a head start; at most once a day, silent on failure.
+        root.postDelayed({ checkForUpdate() }, 4000)
     }
 
     // region WebView
@@ -325,6 +329,16 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 return true
             }
 
+            override fun onReceivedTitle(view: WebView, title: String?) {
+                // Many pages set their real title after onPageFinished; keep the history entry's title current.
+                val url = view.url ?: return
+                if (view === webView && !inPrivate && title != null && !title.startsWith("http")) {
+                    val list = prefs.history
+                    val updated = History.retitle(list, url, title)
+                    if (updated !== list) prefs.history = updated
+                }
+            }
+
             override fun onReceivedIcon(view: WebView, icon: Bitmap) {
                 // YouTube's TV interface reports the YouTube TV app icon; keep the normal YouTube icon for the tile.
                 if (view === webView && !inPrivate && !isTvSite(view.url)) saveFavicon(icon)
@@ -468,17 +482,193 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         urlField.setOnEditorActionListener { _, actionId, event ->
             val go = actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_DONE ||
                 (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)
-            if (go) {
-                closeShortcuts()
-                load(normalizeInput(urlField.text.toString()))
-                hideKeyboard()
-                urlField.clearFocus()
-                webView.requestFocus()
-            }
+            if (go) submitAddress(urlField.text.toString())
             go
         }
+        urlField.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            // Only what the user types: page loads set the text while the field doesn't have focus.
+            override fun afterTextChanged(s: android.text.Editable?) {
+                root.removeCallbacks(suggestRunnable)
+                if (urlField.hasFocus()) root.postDelayed(suggestRunnable, 200)
+            }
+        })
+        val voice = findViewById<View>(R.id.btnVoice)
+        voice.visibility = if (voiceAvailable) View.VISIBLE else View.GONE
+        voice.setOnClickListener { startVoice() }
         updateShield()
         updateNav()
+    }
+
+    /** Opens what was typed (or picked) in the address bar and hands the remote back to the page. */
+    private fun submitAddress(input: String) {
+        hideSuggestions()
+        hideKeyboard()
+        urlField.clearFocus()
+        historyPanel.visibility = View.GONE
+        shortcutsPanel.visibility = View.GONE
+        editingShortcuts = false
+        editingPopular = false
+        onOverlayChanged(null)
+        load(normalizeInput(input))
+    }
+
+    // ---- Address-bar suggestions ----
+
+    private val suggestPanel: LinearLayout by lazy { findViewById(R.id.suggestPanel) }
+    private fun suggestOpen() = suggestPanel.visibility == View.VISIBLE
+    private val suggestRunnable = Runnable { updateSuggestions() }
+    private val suggestExecutor by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    /** Bumped on every keystroke; a response for an older one is dropped. */
+    @Volatile private var suggestGen = 0
+    private var lastRemote: Pair<String, List<String>>? = null
+    /** Rebuilding the list moves focus for a moment; that must not count as leaving it. */
+    private var renderingSuggestions = false
+    private val defaultUa by lazy { WebSettings.getDefaultUserAgent(this) }
+
+    /** Local matches (Favourites, History) always; engine suggestions only if turned on, never in private mode. */
+    private fun updateSuggestions() {
+        val q = urlField.text.toString().trim()
+        val editing = urlField.hasFocus() || isInside(suggestPanel, currentFocus)
+        if (!editing || q.isEmpty() || q == webView.url) { hideSuggestions(); return }
+        val engine = WebSearch.engine(prefs.searchEngine)
+        val remoteOk = prefs.searchSuggestions && !inPrivate && !WebSearch.looksLikeUrl(q)
+        // Keep the previous answer while the next one loads, if it is for the start of what's typed now.
+        renderSuggestions(q, lastRemote?.takeIf { remoteOk && q.startsWith(it.first, ignoreCase = true) }?.second.orEmpty())
+        if (!remoteOk) return
+        val gen = ++suggestGen
+        val url = WebSearch.suggestUrl(q, engine)
+        val ua = defaultUa
+        suggestExecutor.execute {
+            if (gen != suggestGen) return@execute
+            // No cookies: HttpURLConnection doesn't share the WebView's cookie jar, so this isn't tied to a signed-in account.
+            val list = runCatching {
+                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 3000; c.readTimeout = 3000
+                c.setRequestProperty("User-Agent", ua)
+                try { if (c.responseCode == 200) WebSearch.parseSuggestions(c.inputStream.bufferedReader().use { it.readText() }) else emptyList() }
+                finally { c.disconnect() }
+            }.getOrDefault(emptyList())
+            runOnUiThread {
+                if (gen != suggestGen || !urlField.hasFocus() && !isInside(suggestPanel, currentFocus)) return@runOnUiThread
+                lastRemote = q to list
+                renderSuggestions(q, list)
+            }
+        }
+    }
+
+    private fun renderSuggestions(q: String, remote: List<String>) {
+        val focusedTag = (currentFocus?.takeIf { isInside(suggestPanel, it) })?.tag as? String
+        renderingSuggestions = true
+        suggestPanel.removeAllViews()
+        val engine = WebSearch.engine(prefs.searchEngine)
+        val favs = prefs.shortcuts
+        val history = if (inPrivate) emptyList() else prefs.history.map { it.title to it.url }
+        val local = WebSearch.localMatches(q, favs + history, max = 3)
+        val isUrl = WebSearch.looksLikeUrl(q)
+        if (isKeyboardVisible()) suggestPanel.addView(TextView(this).apply {
+            text = "Back closes the keyboard, then ▼ to choose"
+            setTextColor(0xFF9CA3AF.toInt()); textSize = 13f
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+        })
+        val rows = mutableListOf<View>()
+        fun row(icon: Int, title: String, subtitle: String?, action: () -> Unit) {
+            rows += LinearLayout(this).apply {
+                id = View.generateViewId()
+                orientation = LinearLayout.HORIZONTAL
+                gravity = android.view.Gravity.CENTER_VERTICAL
+                minimumHeight = dp(46)
+                setPadding(dp(12), dp(4), dp(12), dp(4))
+                setBackgroundResource(R.drawable.row_bg)
+                isClickable = true; isFocusable = true
+                tag = "sug:${rows.size}"
+                addView(android.widget.ImageView(context).apply { setImageResource(icon) }, LinearLayout.LayoutParams(dp(20), dp(20)))
+                addView(textBlock(title, subtitle).apply {
+                    setPadding(dp(14), 0, 0, 0)
+                    (getChildAt(0) as TextView).apply { textSize = 16f; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+                    (getChildAt(1) as? TextView)?.apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                setOnClickListener { action() }
+            }.also { suggestPanel.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)) }
+        }
+        if (isUrl) row(R.drawable.ic_forward, q, "Open address") { submitAddress(q) }
+        else row(R.drawable.ic_search, q, "Search ${engine.name}") { submitAddress(q) }
+        local.forEach { (title, url) ->
+            val fav = favs.any { sameUrl(it.second, url) }
+            row(if (fav) R.drawable.ic_star else R.drawable.ic_history, title, WebSearch.displayUrl(url)) { submitAddress(url) }
+        }
+        remote.filterNot { it.equals(q, ignoreCase = true) }.take(5).forEach { s -> row(R.drawable.ic_search, s, null) { submitAddress(s) } }
+        if (!prefs.searchSuggestions && !inPrivate && !isUrl) {
+            row(R.drawable.ic_settings, "Show ${engine.name} suggestions as you type", "Sends what you type to ${engine.name}. Never in private browsing.") {
+                prefs.searchSuggestions = true
+                note("Search suggestions on · turn off in Settings → Search")
+                updateSuggestions()
+            }
+        }
+        // D-pad: ▲ from the first row returns to the address field; ◀ ▶ and ▼ at the end stay in the list.
+        rows.forEachIndexed { i, v ->
+            v.nextFocusUpId = if (i == 0) R.id.urlField else rows[i - 1].id
+            v.nextFocusDownId = if (i == rows.size - 1) v.id else rows[i + 1].id
+            v.nextFocusLeftId = v.id; v.nextFocusRightId = v.id
+        }
+        val fieldLoc = IntArray(2).also { urlField.getLocationInWindow(it) }
+        val rootLoc = IntArray(2).also { root.getLocationInWindow(it) }
+        (suggestPanel.layoutParams as FrameLayout.LayoutParams).apply {
+            leftMargin = fieldLoc[0] - rootLoc[0]
+            topMargin = fieldLoc[1] - rootLoc[1] + urlField.height + dp(6)
+            width = urlField.width
+        }
+        suggestPanel.requestLayout()
+        suggestPanel.visibility = View.VISIBLE
+        if (focusedTag != null) (suggestPanel.findViewWithTag<View>(focusedTag) ?: rows.firstOrNull())?.requestFocus()
+        renderingSuggestions = false
+    }
+
+    private fun hideSuggestions() {
+        root.removeCallbacks(suggestRunnable)
+        suggestGen++
+        if (!suggestOpen()) return
+        val hadFocus = isInside(suggestPanel, currentFocus)
+        suggestPanel.visibility = View.GONE
+        suggestPanel.removeAllViews()
+        if (hadFocus) urlField.requestFocus()
+    }
+
+    // ---- Voice search ----
+
+    private val voiceAvailable by lazy {
+        runCatching { packageManager.queryIntentActivities(Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0).isNotEmpty() }.getOrDefault(false)
+    }
+    /** An app text field (History search, add favourite) that should get the spoken text instead of the address bar. */
+    private var voiceTarget: EditText? = null
+
+    private fun startVoice() {
+        voiceTarget = (currentFocus as? EditText)?.takeIf { it !== urlField }
+        val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, if (voiceTarget != null) "Speak to type" else "Say a search or a website")
+        try {
+            startActivityForResult(intent, REQ_VOICE)
+        } catch (e: android.content.ActivityNotFoundException) {
+            note("Voice search isn't available on this TV. Type with your phone instead: ⋮ → Phone remote")
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_VOICE) return
+        val target = voiceTarget
+        voiceTarget = null
+        val text = data?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim()
+        if (resultCode != RESULT_OK || text.isNullOrEmpty()) return
+        if (target != null && target.isShown) {
+            target.setText(text); target.setSelection(text.length); target.requestFocus()
+            return
+        }
+        urlField.setText(text)
+        submitAddress(text)
     }
 
     private fun isProtected(host: String?) = prefs.adBlock && HostRules.siteOf(host) !in prefs.pausedSites
@@ -624,6 +814,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private lateinit var shortcutsPanel: View
     private var editingShortcuts = false
+    private var editingPopular = false
 
     private fun setupShortcuts() {
         shortcutsPanel = findViewById(R.id.shortcutsPanel)
@@ -638,6 +829,23 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.addThisPage).setOnClickListener {
             val url = webView.url.orEmpty()
             addShortcut(webView.title?.takeIf { it.isNotBlank() } ?: Uri.parse(url).host.orEmpty(), url)
+        }
+        findViewById<TextView>(R.id.popularEdit).setOnClickListener {
+            editingPopular = !editingPopular
+            renderShortcuts()
+            (if (editingPopular) findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0) ?: findViewById<ViewGroup>(R.id.popularSuggest).getChildAt(0) else null
+                ?: findViewById(R.id.popularEdit))?.requestFocus()
+        }
+        val popField = findViewById<EditText>(R.id.popularAddField)
+        popField.setOnEditorActionListener { _, _, _ ->
+            val text = popField.text.toString().trim()
+            if (text.isNotEmpty()) {
+                val url = normalizeInput(text)
+                addPopular(prettyHost(url), url)
+                popField.setText("")
+            }
+            hideKeyboard(popField); findViewById<View>(R.id.popularEdit).requestFocus()
+            true
         }
         val field = findViewById<EditText>(R.id.addField)
         field.setOnEditorActionListener { _, _, _ ->
@@ -656,11 +864,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         menuPanel.visibility = View.GONE
         shieldPanel.visibility = View.GONE
         if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
+        historyPanel.visibility = View.GONE
         editingShortcuts = false
+        editingPopular = false
         renderShortcuts()
         shortcutsPanel.visibility = View.VISIBLE
         findViewById<View>(R.id.shortcutsScroll).scrollTo(0, 0)
-        onOverlayChanged(findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0))
+        onOverlayChanged(findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0) ?: findViewById(R.id.homeRemote))
     }
 
     private fun closeShortcuts() {
@@ -680,13 +890,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         findViewById<View>(R.id.shortcutsClose).visibility = if (hasPage()) View.VISIBLE else View.GONE
         findViewById<View>(R.id.addThisPage).visibility = if (hasPage() && !isFavourite(webView.url)) View.VISIBLE else View.GONE
         findViewById<TextView>(R.id.shortcutsEdit).apply {
-            text = if (editingShortcuts) "Done" else "Edit"
+            text = if (editingShortcuts) "Stop editing" else "Edit"
             visibility = if (favs.isEmpty()) View.GONE else View.VISIBLE
         }
         findViewById<View>(R.id.shortcutsEmpty).visibility = if (favs.isEmpty()) View.VISIBLE else View.GONE
 
+        renderUpdateCard()
         findViewById<TextView>(R.id.homeTitle).text = if (inPrivate) "Private browsing" else "Home"
         findViewById<TextView>(R.id.homePrivate).text = if (inPrivate) "Close private browsing" else "Private browsing"
+        findViewById<TextView>(R.id.homePrivate).setCompoundDrawablesRelativeWithIntrinsicBounds(if (inPrivate) R.drawable.ic_private_on else R.drawable.ic_private, 0, 0, 0)
         findViewById<TextView>(R.id.privateInfo).apply {
             visibility = if (inPrivate) View.VISIBLE else View.GONE
             text = buildString {
@@ -697,9 +909,14 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 append("Websites, your internet provider and your network can still see what you visit. Use a VPN app on the TV to hide that.")
             }
         }
-        fillGrid(R.id.popularGrid, POPULAR, height = 160, iconSize = 64, kind = "pop")
+        val popular = prefs.popular
+        findViewById<TextView>(R.id.popularEdit).text = if (editingPopular) "Stop editing" else "Edit"
+        findViewById<View>(R.id.popularEmpty).visibility = if (popular.isEmpty() && !editingPopular) View.VISIBLE else View.GONE
+        fillGrid(R.id.popularGrid, popular, height = 160, iconSize = 64, kind = "pop")
+        renderPopularAdd(popular)
+        arrangeHome()
         fillGrid(R.id.shortcutsGrid, favs, height = 150, iconSize = 56, kind = "fav")
-        val recent = if (inPrivate) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
+        val recent = if (inPrivate || "rec" in prefs.hiddenSections) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }.take(10)
         findViewById<View>(R.id.recentTitle).visibility = if (recent.isEmpty()) View.GONE else View.VISIBLE
         fillGrid(R.id.recentGrid, recent, height = 130, iconSize = 44, kind = "rec")
 
@@ -709,7 +926,101 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             val idx = focusedTag.substringAfter("fav:").substringBefore('|').toIntOrNull() ?: 0
             (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1)) ?: findViewById(R.id.shortcutsEdit)).requestFocus()
         }
-        if (!inPrivate) fetchMissingIcons(POPULAR + favs + recent)
+        if (focusedTag != null && focusedTag.startsWith("pop:")) {
+            val grid = findViewById<ViewGroup>(R.id.popularGrid)
+            val idx = focusedTag.substringAfter("pop:").substringBefore('|').toIntOrNull() ?: 0
+            (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1)) ?: findViewById(R.id.popularEdit)).requestFocus()
+        }
+        if (focusedTag != null && focusedTag.startsWith("sug:"))
+            (findViewById<ViewGroup>(R.id.popularSuggest).getChildAt(0) ?: findViewById<View>(R.id.popularAddField)).requestFocus()
+        if (!inPrivate) fetchMissingIcons(popular + favs + recent)
+    }
+
+    /** Edit mode: one-press chips for well-known sites not already in Popular, plus a free address field. */
+    private fun sectionView(id: String): View = findViewById(when (id) { "pop" -> R.id.popularSection; "fav" -> R.id.favSection; else -> R.id.recentSection })
+    private fun sectionName(id: String) = when (id) { "pop" -> "Popular"; "fav" -> "Favourites"; else -> "Recently visited" }
+
+    /** Puts the sections in the saved order and hides the ones the user turned off. */
+    private fun arrangeHome() {
+        val parent = findViewById<ViewGroup>(R.id.popularSection).parent as ViewGroup
+        val views = prefs.homeOrder.map { sectionView(it) }
+        val at = views.minOf { parent.indexOfChild(it) }
+        views.forEach { parent.removeView(it) }
+        views.forEachIndexed { i, v -> parent.addView(v, at + i) }
+        val hidden = prefs.hiddenSections
+        prefs.homeOrder.forEach { sectionView(it).visibility = if (it in hidden) View.GONE else View.VISIBLE }
+        renderSectionTools("pop", R.id.popularTools, editingPopular)
+        renderSectionTools("fav", R.id.favTools, editingShortcuts)
+    }
+
+    /** In edit mode: move the section up/down or hide it. Hidden sections come back from Settings → Start screen. */
+    private fun renderSectionTools(id: String, toolsId: Int, editing: Boolean) {
+        val row = findViewById<LinearLayout>(toolsId)
+        row.removeAllViews()
+        row.visibility = if (editing) View.VISIBLE else View.GONE
+        if (!editing) return
+        val order = prefs.homeOrder
+        val pos = order.indexOf(id)
+        fun tool(label: String, enabled: Boolean, action: () -> Unit) {
+            if (!enabled) return
+            row.addView(TextView(this).apply {
+                text = label; textSize = 14f; setTextColor(android.graphics.Color.WHITE)
+                gravity = android.view.Gravity.CENTER
+                setBackgroundResource(R.drawable.toolbar_button); setPadding(dp(16), 0, dp(16), 0)
+                isClickable = true; isFocusable = true; tag = "tool:$id:$label"
+                setOnClickListener { action() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(38)).apply { marginEnd = dp(10) })
+        }
+        fun move(by: Int) {
+            val o = order.toMutableList(); o.removeAt(pos); o.add(pos + by, id); prefs.homeOrder = o
+            renderShortcuts()
+            sectionView(id).findViewWithTag<View>("tool:$id:" + if (by < 0) "↑  Move up" else "↓  Move down")?.requestFocus()
+                ?: findViewById<View>(if (id == "pop") R.id.popularEdit else R.id.shortcutsEdit).requestFocus()
+        }
+        tool("↑  Move up", pos > 0) { move(-1) }
+        tool("↓  Move down", pos < order.size - 1) { move(1) }
+        tool("Hide ${sectionName(id)}", true) {
+            prefs.hiddenSections = prefs.hiddenSections + id
+            if (id == "pop") editingPopular = false else editingShortcuts = false
+            renderShortcuts()
+            note("${sectionName(id)} hidden. Show it again in Settings → Start screen")
+            (findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0)?.takeIf { it.isShown } ?: findViewById(R.id.homeRemote)).requestFocus()
+        }
+    }
+
+    private fun renderPopularAdd(popular: List<Pair<String, String>>) {
+        findViewById<View>(R.id.popularAdd).visibility = if (editingPopular) View.VISIBLE else View.GONE
+        val grid = findViewById<android.widget.GridLayout>(R.id.popularSuggest)
+        grid.removeAllViews()
+        if (!editingPopular) return
+        val have = popular.map { prettyHost(it.second) }.toSet()
+        val offer = (Prefs.DEFAULT_POPULAR + Prefs.POPULAR_SUGGESTIONS).filter { prettyHost(it.second) !in have }
+        val cols = grid.columnCount
+        val gap = dp(10)
+        val chipW = (resources.displayMetrics.widthPixels - dp(128) - gap * (cols - 1)) / cols
+        offer.forEachIndexed { i, (title, url) ->
+            grid.addView(TextView(this).apply {
+                text = "＋  $title"
+                setTextColor(android.graphics.Color.WHITE); textSize = 15f
+                gravity = android.view.Gravity.CENTER
+                maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                setBackgroundResource(R.drawable.toolbar_button)
+                isClickable = true; isFocusable = true
+                tag = "sug:$i|$url"
+                if (i % cols == cols - 1 || i == offer.size - 1) { id = View.generateViewId(); nextFocusRightId = id }
+                setOnClickListener { addPopular(title, url) }
+            }, android.widget.GridLayout.LayoutParams().apply {
+                width = chipW; height = dp(44)
+                setMargins(0, 0, if (i % cols == cols - 1) 0 else gap, gap)
+            })
+        }
+    }
+
+    private fun addPopular(title: String, url: String) {
+        if (prefs.popular.any { sameUrl(it.second, url) || prettyHost(it.second) == prettyHost(url) }) { note("$title is already in Popular"); return }
+        prefs.popular = prefs.popular + (title to url)
+        renderShortcuts()
+        note("Added $title to Popular")
     }
 
     private fun fillGrid(gridId: Int, items: List<Pair<String, String>>, height: Int, iconSize: Int, kind: String) {
@@ -720,8 +1031,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val gap = dp(16)
         val tileW = (gridWidth - gap * (cols - 1)) / cols
         items.forEachIndexed { i, (title, url) ->
-            val tile = buildTile(title, url, iconSize, deletable = kind == "fav")
+            val tile = buildTile(title, url, iconSize, kind)
             tile.tag = "$kind:$i|$url"
+            // ▶ on a row's last tile stays put instead of jumping up to the toolbar's ⋮
+            if (i % cols == cols - 1 || i == items.size - 1) { tile.id = View.generateViewId(); tile.nextFocusRightId = tile.id }
             grid.addView(tile, android.widget.GridLayout.LayoutParams().apply {
                 width = tileW
                 this.height = dp(height)
@@ -730,15 +1043,17 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
-    private fun buildTile(title: String, url: String, iconSize: Int, deletable: Boolean): View {
+    private fun buildTile(title: String, url: String, iconSize: Int, kind: String): View {
+        val deletable = (kind == "fav" && editingShortcuts) || (kind == "pop" && editingPopular)
         val d = resources.displayMetrics.density
         val tile = FrameLayout(this).apply {
             setBackgroundResource(R.drawable.tile_bg)
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                if (editingShortcuts && deletable) {
-                    prefs.shortcuts = prefs.shortcuts.filterNot { it.second == url }
+                if (deletable) {
+                    if (kind == "pop") prefs.popular = prefs.popular.filterNot { it.second == url }
+                    else prefs.shortcuts = prefs.shortcuts.filterNot { it.second == url }
                     renderShortcuts()
                 } else {
                     closeShortcuts()
@@ -770,7 +1085,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         tile.addView(col, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        if (editingShortcuts && deletable) {
+        if (deletable) {
             tile.addView(TextView(this).apply {
                 text = "✕"
                 setTextColor(android.graphics.Color.WHITE)
@@ -793,7 +1108,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun isFavourite(url: String?) = prefs.shortcuts.any { sameUrl(it.second, url) }
 
     private fun updateStar() {
-        if (menuOpen() && !inClearMenu) buildMenu()
+        if (menuOpen() && !inSubMenu) buildMenu()
     }
 
     private fun toggleFavourite() {
@@ -814,6 +1129,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val site = HostRules.siteOf(Uri.parse(url).host) ?: return
         val entry = (title?.takeIf { it.isNotBlank() } ?: prettyHost(url)) to url
         prefs.recent = (listOf(entry) + prefs.recent.filterNot { HostRules.siteOf(Uri.parse(it.second).host) == site }).take(12)
+        prefs.history = History.add(prefs.history, History.Entry(entry.first, url, System.currentTimeMillis()))
     }
 
     private val iconFetchTried = HashSet<String>()
@@ -926,6 +1242,303 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts()
     }
 
+    // ---- History page ----
+
+    private val historyPanel: View by lazy { findViewById(R.id.historyPanel) }
+    private val historySearch: EditText by lazy { findViewById(R.id.historySearch) }
+    private var confirmClearHistory = false
+
+    private fun setupHistory() {
+        findViewById<View>(R.id.homeHistory).setOnClickListener { showHistory() }
+        findViewById<View>(R.id.homeRemote).setOnClickListener { showPhoneRemote() }
+        findViewById<TextView>(R.id.historyClear).setOnClickListener { btn ->
+            btn as TextView
+            if (!confirmClearHistory) { confirmClearHistory = true; btn.text = "Press again to clear"; return@setOnClickListener }
+            prefs.history = emptyList()
+            prefs.recent = emptyList()
+            confirmClearHistory = false
+            btn.text = "Clear history"
+            renderHistory()
+            note("History cleared")
+        }
+        historySearch.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) { if (historyPanel.visibility == View.VISIBLE) renderHistory() }
+        })
+        historySearch.setOnEditorActionListener { _, _, _ ->
+            hideKeyboard(historySearch)
+            // Straight to the first result, so OK on the keyboard's search key lands somewhere useful.
+            (findViewById<ViewGroup>(R.id.historyContent).findViewWithTag<View>("hist:0") ?: historySearch).requestFocus()
+            true
+        }
+    }
+
+    private fun showHistory() {
+        closeMenu()
+        shieldPanel.visibility = View.GONE
+        if (::settingsPanel.isInitialized) settingsPanel.visibility = View.GONE
+        confirmClearHistory = false
+        findViewById<TextView>(R.id.historyClear).text = "Clear history"
+        historySearch.setText("")
+        renderHistory()
+        findViewById<android.widget.ScrollView>(R.id.historyScroll).scrollTo(0, 0)
+        historyPanel.visibility = View.VISIBLE
+        val first = findViewById<ViewGroup>(R.id.historyContent).findViewWithTag<View>("hist:0")
+        onOverlayChanged(first ?: historySearch)
+    }
+
+    private fun closeHistory() {
+        if (historyPanel.visibility != View.VISIBLE) return
+        hideKeyboard(historySearch); historySearch.clearFocus()
+        historyPanel.visibility = View.GONE
+        // Opened from the home screen: land back on its History button.
+        onOverlayChanged(if (shortcutsPanel.visibility == View.VISIBLE) findViewById(R.id.homeHistory) else null)
+    }
+
+    private fun openFromHistory(url: String) {
+        historyPanel.visibility = View.GONE
+        closeShortcuts()
+        onOverlayChanged(null)
+        load(url)
+    }
+
+    /** Day headings, then one row per page. Rendering is capped so a long history stays quick on TV hardware. */
+    private fun renderHistory() {
+        val c = findViewById<LinearLayout>(R.id.historyContent)
+        val focusTag = currentFocus?.tag as? String
+        c.removeAllViews()
+        val all = prefs.history
+        val query = historySearch.text.toString()
+        val matches = History.search(all, query)
+        findViewById<View>(R.id.historyClear).visibility = if (all.isEmpty()) View.GONE else View.VISIBLE
+        if (matches.isEmpty()) {
+            c.addView(TextView(this).apply {
+                text = when {
+                    all.isEmpty() && inPrivate -> "Private browsing doesn't save history. These are pages from normal browsing; there are none yet."
+                    all.isEmpty() -> "No history yet. Pages you open appear here (not in private browsing)."
+                    else -> "Nothing in your history matches \"${query.trim()}\"."
+                }
+                setTextColor(0xFF9CA3AF.toInt()); textSize = 16f
+                gravity = android.view.Gravity.CENTER
+                setBackgroundResource(R.drawable.card_bg)
+                setPadding(dp(24), dp(24), dp(24), dp(24))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(16) })
+            return
+        }
+        val now = System.currentTimeMillis()
+        val timeFormat = android.text.format.DateFormat.getTimeFormat(this)
+        var lastDay: String? = null
+        val shown = matches.take(HISTORY_RENDER_MAX)
+        val rows = mutableListOf<ViewGroup>()
+        shown.forEachIndexed { i, e ->
+            val day = History.dayLabel(e.time, now)
+            if (day != lastDay) {
+                lastDay = day
+                c.addView(TextView(this).apply {
+                    text = day.uppercase()
+                    setTextColor(0xFF818CF8.toInt()); textSize = 13f; letterSpacing = 0.12f
+                    setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    setPadding(dp(4), dp(20), 0, dp(8))
+                })
+            }
+            c.addView(historyRow(e, i, timeFormat.format(java.util.Date(e.time))).also { rows += it })
+        }
+        // ▲▼ move row to row (or Remove to Remove), ◀▶ only between a row and its Remove button, so focus can't wander to the toolbar.
+        rows.forEachIndexed { i, row ->
+            val del = row.getChildAt(row.childCount - 1)
+            row.nextFocusUpId = if (i == 0) R.id.historySearch else rows[i - 1].id
+            row.nextFocusDownId = if (i == rows.size - 1) row.id else rows[i + 1].id
+            row.nextFocusLeftId = row.id
+            row.nextFocusRightId = del.id
+            del.nextFocusLeftId = row.id
+            del.nextFocusUpId = if (i == 0) R.id.historySearch else rows[i - 1].getChildAt(rows[i - 1].childCount - 1).id
+            del.nextFocusDownId = if (i == rows.size - 1) del.id else rows[i + 1].getChildAt(rows[i + 1].childCount - 1).id
+            del.nextFocusRightId = del.id
+        }
+        if (matches.size > shown.size) c.addView(subheading("Showing the newest ${shown.size} of ${matches.size}. Search to find older pages."))
+        // Keep focus on the same row (or the one that took its place) after a re-render.
+        if (focusTag != null && focusTag.startsWith("hist")) {
+            val idx = focusTag.substringAfter(':').toIntOrNull() ?: 0
+            val tag = if (focusTag.startsWith("histDel") && idx < shown.size) "histDel:$idx" else "hist:${idx.coerceAtMost(shown.size - 1)}"
+            (c.findViewWithTag<View>(tag) ?: historySearch).requestFocus()
+        }
+    }
+
+    private fun historyRow(e: History.Entry, index: Int, time: String): ViewGroup {
+        val row = rowContainer().apply {
+            id = View.generateViewId()
+            isClickable = true; isFocusable = true
+            tag = "hist:$index"
+            setOnClickListener { openFromHistory(e.url) }
+        }
+        row.addView(siteAvatar(e.url, e.title), LinearLayout.LayoutParams(dp(36), dp(36)))
+        row.addView(textBlock(e.title.ifBlank { prettyHost(e.url) }, "$time · ${WebSearch.displayUrl(e.url)}").apply {
+            setPadding(dp(16), 0, dp(8), 0)
+            (getChildAt(0) as TextView).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+            (getChildAt(1) as TextView).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(TextView(this).apply {
+            text = "Remove"
+            gravity = android.view.Gravity.CENTER
+            setTextColor(0xFFD1D5DB.toInt()); textSize = 14f
+            setBackgroundResource(R.drawable.toolbar_button)
+            setPadding(dp(14), 0, dp(14), 0)
+            id = View.generateViewId()
+            isClickable = true; isFocusable = true
+            tag = "histDel:$index"
+            contentDescription = "Remove from history"
+            setOnClickListener {
+                prefs.history = History.remove(prefs.history, e.url)
+                renderHistory()
+            }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(36)))
+        return row
+    }
+
+    // ---- Updates: GitHub "latest release" check, download, system installer ----
+
+    /** Debug builds can pretend to be older (`am start ... --es debug_version 1.0.0`) to test the update card. */
+    private val currentVersion: String by lazy {
+        intent?.getStringExtra("debug_version")?.takeIf { BuildConfig.DEBUG } ?: BuildConfig.VERSION_NAME
+    }
+    private var checkingUpdate = false
+    private var updateDownloading = false
+
+    private fun availableUpdate(): Updates.Release? =
+        prefs.latestRelease?.takeIf { Updates.isNewer(it.version, currentVersion) }
+
+    /** At most once a day unless [force]d. Offline, rate-limited or no usable release all just mean "no card". */
+    private fun checkForUpdate(force: Boolean = false, done: (() -> Unit)? = null) {
+        if (checkingUpdate) return
+        if (!force && (!prefs.updateCheck || !Updates.due(prefs.lastUpdateCheck, System.currentTimeMillis()))) return
+        checkingUpdate = true
+        kotlin.concurrent.thread(name = "update-check") {
+            val answer = runCatching {
+                val c = java.net.URL(Updates.RELEASES_API).openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 8000; c.readTimeout = 10000
+                c.setRequestProperty("Accept", "application/vnd.github+json")
+                c.setRequestProperty("User-Agent", "mkTV/${BuildConfig.VERSION_NAME}") // GitHub's API requires one
+                try { c.responseCode to (if (c.responseCode == 200) c.inputStream.bufferedReader().use { it.readText() } else "") }
+                finally { c.disconnect() }
+            }.getOrNull()
+            runOnUiThread {
+                checkingUpdate = false
+                if (answer != null) {
+                    // GitHub answered (even with an error): don't ask again until tomorrow.
+                    prefs.lastUpdateCheck = System.currentTimeMillis()
+                    if (answer.first == 200) prefs.latestRelease = Updates.parseRelease(answer.second)
+                    else if (force) note("GitHub didn't answer the update check (${answer.first}). Try again later.")
+                } else if (force) note("Couldn't reach GitHub. Check the connection and try again.")
+                if (shortcutsPanel.visibility == View.VISIBLE) renderUpdateCard()
+                done?.invoke()
+            }
+        }
+    }
+
+    /** Non-blocking card at the top of the home screen; "Later" hides it until the next version. */
+    private fun renderUpdateCard() {
+        val card = findViewById<View>(R.id.updateCard)
+        val r = availableUpdate()?.takeIf { it.version != prefs.dismissedUpdate || updateDownloading }
+        card.visibility = if (r == null) View.GONE else View.VISIBLE
+        if (r == null) return
+        findViewById<TextView>(R.id.updateTitle).text = "mkTV ${r.version} is available"
+        findViewById<TextView>(R.id.updateText).text = buildString {
+            append("You have $currentVersion. Downloads from GitHub")
+            if (r.size > 0) append(" (%.1f MB)".format(r.size / 1_048_576.0))
+            append(", then Android asks you to install it.")
+        }
+        val go = findViewById<TextView>(R.id.updateGo)
+        if (!updateDownloading) go.text = "Update"
+        go.setOnClickListener { startUpdate(r, go) }
+        findViewById<View>(R.id.updateLater).setOnClickListener {
+            prefs.dismissedUpdate = r.version
+            card.visibility = View.GONE
+            (findViewById<ViewGroup>(R.id.popularGrid).getChildAt(0) ?: findViewById(R.id.homeRemote)).requestFocus()
+        }
+    }
+
+    private fun updateDir() = java.io.File(cacheDir, "updates").apply { mkdirs() }
+
+    /** Downloads mkTV.apk (once per version), checks its size, then hands it to the system installer. */
+    private fun startUpdate(r: Updates.Release, btn: TextView) {
+        if (updateDownloading) return
+        val file = java.io.File(updateDir(), "mkTV-${r.version}.apk")
+        if (file.exists() && (r.size <= 0 || file.length() == r.size)) { installUpdate(file); return }
+        updateDownloading = true
+        btn.text = "Downloading…"
+        kotlin.concurrent.thread(name = "update-download") {
+            val ok = runCatching {
+                updateDir().listFiles()?.forEach { it.delete() } // older downloads
+                val part = java.io.File(updateDir(), "download.part")
+                // GitHub redirects to its download CDN (https → https), which HttpURLConnection follows.
+                val c = java.net.URL(r.apkUrl).openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 10000; c.readTimeout = 20000
+                c.setRequestProperty("User-Agent", "mkTV/${BuildConfig.VERSION_NAME}")
+                try {
+                    check(c.responseCode == 200)
+                    val total = c.contentLengthLong.takeIf { it > 0 } ?: r.size
+                    var got = 0L; var shown = -1
+                    c.inputStream.use { input ->
+                        part.outputStream().use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            while (true) {
+                                val n = input.read(buf); if (n < 0) break
+                                out.write(buf, 0, n); got += n
+                                val pct = if (total > 0) (got * 100 / total).toInt() else -1
+                                if (pct != shown) { shown = pct; runOnUiThread { btn.text = if (pct >= 0) "Downloading $pct%" else "Downloading…" } }
+                            }
+                        }
+                    }
+                } finally { c.disconnect() }
+                check(r.size <= 0 || part.length() == r.size) { "size mismatch" }
+                check(part.renameTo(file))
+            }.isSuccess
+            runOnUiThread {
+                updateDownloading = false
+                btn.text = "Update"
+                if (ok) installUpdate(file) else note("Couldn't download the update. Check the connection and try again.")
+            }
+        }
+    }
+
+    private fun installUpdate(file: java.io.File) {
+        if (!signedLikeThisApp(file)) {
+            note("This update is signed differently from the mkTV installed here (for example a self-built copy), so Android won't install it over it.")
+            return
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            note("Allow mkTV to install apps, then press Update again")
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            } catch (e: android.content.ActivityNotFoundException) {
+                note("Allow mkTV in Settings → Apps → Security & restrictions → Unknown sources, then press Update again")
+            }
+            return
+        }
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: android.content.ActivityNotFoundException) {
+            note("This TV has no app installer")
+        }
+    }
+
+    /** Android refuses an update signed with another key; catch that here with a clear message instead of a vague installer error. */
+    @Suppress("DEPRECATION")
+    private fun signedLikeThisApp(file: java.io.File): Boolean = runCatching {
+        if (android.os.Build.VERSION.SDK_INT < 28) return@runCatching true
+        val flags = android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+        val apk = packageManager.getPackageArchiveInfo(file.path, flags) ?: return@runCatching false
+        if (apk.packageName != packageName) return@runCatching false
+        val theirs = apk.signingInfo?.apkContentsSigners?.map { it.toCharsString() }?.toSet() ?: return@runCatching true
+        val ours = packageManager.getPackageInfo(packageName, flags).signingInfo?.let { info ->
+            listOfNotNull(info.apkContentsSigners, info.signingCertificateHistory).flatMap { it.toList() }.map { it.toCharsString() }.toSet()
+        } ?: return@runCatching true
+        theirs.any { it in ours }
+    }.getOrDefault(true)
+
     // endregion
 
     // region Settings
@@ -936,12 +1549,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun setupSettings() {
         settingsPanel = findViewById(R.id.settingsPanel)
-        findViewById<View>(R.id.settingsDone).setOnClickListener { closeSettings() }
     }
 
     private fun showSettings() {
         menuPanel.visibility = View.GONE
         shieldPanel.visibility = View.GONE
+        historyPanel.visibility = View.GONE
         closeShortcuts()
         settingsDirty = false
         confirmClear = false
@@ -990,6 +1603,32 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 if (prefs.startWithShortcuts) "Popular sites, your Favourites and Recently visited. Switch to use a fixed page instead." else "Opens on launch and with the home button",
                 prefs.homeUrl, "https://www.google.com",
             ) { prefs.homeUrl = it; settingsDirty = true })
+            prefs.homeOrder.forEach { id ->
+                card.addView(toggleRow("Show ${sectionName(id)}", when (id) {
+                    "pop" -> "Well-known video sites; Edit on the home screen to change them"
+                    "fav" -> "Sites you saved"
+                    else -> "The last sites you opened"
+                }, id !in prefs.hiddenSections) { on ->
+                    prefs.hiddenSections = if (on) prefs.hiddenSections - id else prefs.hiddenSections + id
+                })
+            }
+            card.addView(actionRow("Home screen layout", prefs.homeOrder.joinToString(" → ") { sectionName(it) } + ". Change the order with Edit on the home screen.", "Reset") {
+                prefs.homeOrder = Prefs.HOME_SECTIONS; prefs.hiddenSections = emptySet(); renderSettings()
+            })
+        }
+
+        section(c, "Search") { card ->
+            val engine = WebSearch.engine(prefs.searchEngine)
+            card.addView(segmented(WebSearch.ENGINES.map { it.name }, WebSearch.ENGINES.indexOf(engine)) { i ->
+                prefs.searchEngine = WebSearch.ENGINES[i].id; renderSettings()
+            })
+            card.addView(TextView(this).apply {
+                text = "Used for searches typed or spoken in the address bar."
+                setTextColor(0xFF9CA3AF.toInt()); textSize = 13f
+                setPadding(dp(16), dp(10), dp(16), dp(4))
+            })
+            card.addView(toggleRow("Search suggestions", "Suggests searches as you type. Sends what you type in the address bar to ${engine.name}. Never in private browsing.",
+                prefs.searchSuggestions) { prefs.searchSuggestions = it })
         }
 
         section(c, "Protection") { card ->
@@ -1056,7 +1695,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             card.addView(toggleRow("Desktop sites", "Ask sites for their desktop version (bigger layouts, fewer app banners)", prefs.desktopMode) {
                 prefs.desktopMode = it; applyUserAgent(); settingsDirty = true
             })
-            card.addView(actionRow("Clear browsing data", "Cookies, cache and site storage. You'll be signed out of sites.",
+            card.addView(actionRow("Clear browsing data", "Cookies, cache, site storage and history. You'll be signed out of sites.",
                 "Clear", danger = true) { btn ->
                 if (!confirmClear) { confirmClear = true; btn.text = "Press again to confirm"; return@actionRow }
                 CookieManager.getInstance().removeAllCookies(null)
@@ -1064,9 +1703,27 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 webView.clearCache(true)
                 webView.clearHistory()
                 prefs.recent = emptyList()
+                prefs.history = emptyList()
                 confirmClear = false
                 btn.text = "Cleared ✓"
                 settingsDirty = true
+            })
+        }
+
+        section(c, "Updates") { card ->
+            val update = availableUpdate()
+            val status = when {
+                checkingUpdate -> "Checking…"
+                update != null -> "mkTV ${update.version} is available"
+                prefs.lastUpdateCheck == 0L -> "Not checked yet"
+                else -> "Up to date · checked " + android.text.format.DateUtils.getRelativeTimeSpanString(prefs.lastUpdateCheck)
+            }
+            card.addView(actionRow("mkTV $currentVersion", status, if (update != null) "Update" else "Check now") { btn ->
+                if (update != null) startUpdate(update, btn)
+                else { btn.text = "Checking…"; checkForUpdate(force = true) { if (settingsPanel.visibility == View.VISIBLE) renderSettings() } }
+            })
+            card.addView(toggleRow("Check for updates", "Once a day, asks GitHub for the latest mkTV release. Updates install only when you choose.", prefs.updateCheck) {
+                prefs.updateCheck = it
             })
         }
 
@@ -1210,7 +1867,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun overlayOpen() =
         shortcutsPanel.visibility == View.VISIBLE || settingsPanel.visibility == View.VISIBLE ||
-            shieldPanel.visibility == View.VISIBLE || menuOpen() || remotePanel.visibility == View.VISIBLE
+            shieldPanel.visibility == View.VISIBLE || menuOpen() || remotePanel.visibility == View.VISIBLE ||
+            historyPanel.visibility == View.VISIBLE || wifiPanel.visibility == View.VISIBLE || suggestOpen()
 
     // ---- Phone remote (LAN web page, paired by QR code) ----
 
@@ -1228,19 +1886,127 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             qr.setImageDrawable(null)
             findViewById<TextView>(R.id.remoteUrl).text = ""
         } else {
-            steps.text = "1. Connect your phone to the same Wi-Fi as this TV.\n2. Scan this code with the phone's camera.\n3. Use the remote and keyboard in your phone's browser."
+            renderRemoteSteps()
+            // Naming the network needs location permission: ask once, the first time the remote opens.
+            if (!hasLocation() && !prefs.askedWifiName) { prefs.askedWifiName = true; requestWifiName() }
             findViewById<TextView>(R.id.remoteUrl).text = url
             qr.setImageBitmap(qrBitmap(url, dp(240)))
         }
-        findViewById<View>(R.id.remoteClose).setOnClickListener { closePhoneRemote() }
+        findViewById<View>(R.id.remoteWifi).setOnClickListener { showShareWifi(fromRemote = true) }
         remotePanel.visibility = View.VISIBLE
-        onOverlayChanged(findViewById(R.id.remoteClose))
+        onOverlayChanged(findViewById(R.id.remoteWifi))
+    }
+
+    /** Step 1 names the TV's Wi-Fi, so homes with several networks pick the right one. */
+    private fun renderRemoteSteps() {
+        val ssid = currentSsid()
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+        val wired = cm.getNetworkCapabilities(cm.activeNetwork)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) == true
+        val step1 = when {
+            ssid != null -> "1. Connect your phone to the Wi-Fi “$ssid” (the TV is on it)."
+            wired -> "1. Connect your phone to the Wi-Fi of the router this TV is plugged into."
+            hasLocation() && !locationOn() -> "1. Connect your phone to the same Wi-Fi as this TV. Turn on Location in the TV's settings to see its name here."
+            else -> "1. Connect your phone to the same Wi-Fi as this TV."
+        }
+        findViewById<TextView>(R.id.remoteSteps).text = "$step1\n2. Scan this code with the phone's camera.\n3. Use the remote and keyboard in your phone's browser."
     }
 
     private fun closePhoneRemote() {
         if (remotePanel.visibility != View.VISIBLE) return
         remotePanel.visibility = View.GONE
-        onOverlayChanged(null)
+        // opened from Home's button: land back on it
+        onOverlayChanged(if (shortcutsPanel.visibility == View.VISIBLE) findViewById(R.id.homeRemote) else null)
+    }
+
+    // ---- Share Wi-Fi: "join this network" QR for guests ----
+
+    private val wifiPanel: View by lazy { findViewById(R.id.wifiPanel) }
+    private var wifiFromRemote = false
+    private var wifiWired = false
+
+    private fun showShareWifi(fromRemote: Boolean = false) {
+        closeMenu()
+        wifiFromRemote = fromRemote
+        remotePanel.visibility = View.GONE
+        val name = findViewById<EditText>(R.id.wifiName)
+        val pass = findViewById<EditText>(R.id.wifiPass)
+        if (!wifiWired) {
+            wifiWired = true
+            // Every keystroke saves and redraws: no Save button.
+            val watcher = object : android.text.TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    prefs.wifiSsid = name.text.toString(); prefs.wifiPassword = pass.text.toString(); renderWifiQr()
+                }
+            }
+            name.addTextChangedListener(watcher); pass.addTextChangedListener(watcher)
+            findViewById<View>(R.id.wifiDetect).setOnClickListener { detectWifi(ask = true) }
+        }
+        name.setText(prefs.wifiSsid); pass.setText(prefs.wifiPassword)
+        if (prefs.wifiSsid.isEmpty()) detectWifi(ask = false)
+        renderWifiQr()
+        wifiPanel.visibility = View.VISIBLE
+        wifiPanel.isFocusable = true
+        onOverlayChanged(if (prefs.wifiSsid.isEmpty()) findViewById(R.id.wifiDetect) else wifiPanel)
+    }
+
+    private fun closeShareWifi() {
+        if (wifiPanel.visibility != View.VISIBLE) return
+        (currentFocus as? EditText)?.let { hideKeyboard(it) }
+        wifiPanel.visibility = View.GONE
+        if (wifiFromRemote) showPhoneRemote()
+        else onOverlayChanged(if (shortcutsPanel.visibility == View.VISIBLE) findViewById(R.id.homeRemote) else null)
+    }
+
+    private fun renderWifiQr() {
+        val ssid = prefs.wifiSsid.trim()
+        val pw = prefs.wifiPassword
+        val problem = WifiQr.passwordProblem(pw)
+        val qr = findViewById<android.widget.ImageView>(R.id.wifiQr)
+        val ok = ssid.isNotEmpty() && problem == null
+        if (ok) qr.setImageBitmap(qrBitmap(WifiQr.text(ssid, pw), dp(240))) else qr.setImageDrawable(null)
+        findViewById<View>(R.id.wifiQrEmpty).visibility = if (ok) View.GONE else View.VISIBLE
+        findViewById<TextView>(R.id.wifiHint).text = problem
+            ?: "Saved on this TV only, never sent anywhere · Back to close"
+    }
+
+    private val locationRequest = 41
+
+    private fun hasLocation() =
+        checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun requestWifiName() = requestPermissions(
+        arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION), locationRequest)
+
+    private fun locationOn(): Boolean = android.os.Build.VERSION.SDK_INT < 28 ||
+        (getSystemService(LOCATION_SERVICE) as android.location.LocationManager).isLocationEnabled
+
+    /** The connected Wi-Fi's name, or null (no permission, Location off, Ethernet). */
+    @Suppress("DEPRECATION")
+    private fun currentSsid(): String? = if (!hasLocation()) null else
+        WifiQr.cleanSsid((applicationContext.getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager)?.connectionInfo?.ssid)
+
+    /** Android shows the Wi-Fi name only to apps with location permission (and Location on). */
+    private fun detectWifi(ask: Boolean) {
+        if (!hasLocation()) { if (ask) requestWifiName(); return }
+        val ssid = currentSsid()
+        if (ssid != null) {
+            findViewById<EditText>(R.id.wifiName).setText(ssid)
+            if (ask) findViewById<EditText>(R.id.wifiPass).requestFocus()
+        } else if (ask && !locationOn()) {
+            note("Android shows the Wi-Fi name only while Location is on. Turn it on here, or type the name.")
+            runCatching { startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+        } else if (ask) note("Couldn't read the network name (is the TV on Ethernet?). Type it instead.")
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != locationRequest) return
+        val granted = grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (remotePanel.visibility == View.VISIBLE) renderRemoteSteps()
+        if (wifiPanel.visibility != View.VISIBLE) return
+        if (granted) detectWifi(ask = true) else note("No problem: type the network name instead")
     }
 
     private fun qrBitmap(text: String, size: Int): Bitmap {
@@ -1331,11 +2097,26 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun openMenu() {
         shieldPanel.visibility = View.GONE
-        inClearMenu = false
+        inSubMenu = false
         buildMenu()
         menuPanel.visibility = View.VISIBLE
-        onOverlayChanged(menuPanel.getChildAt(0))
+        onOverlayChanged(firstMenuItem())
     }
+
+    /** Keeps ▲/▼ inside the menu: the first and last focusable rows stop instead of jumping to the toolbar. */
+    private fun trapMenuFocus() {
+        val rows = mutableListOf<View>()
+        fun walk(v: View) { if (v.isFocusable && v.visibility == View.VISIBLE) rows += v else if (v is ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i)) }
+        walk(menuPanel)
+        rows.forEach { if (it.id == View.NO_ID) it.id = View.generateViewId(); it.nextFocusLeftId = it.id; it.nextFocusRightId = it.id }
+        rows.firstOrNull()?.let { it.nextFocusUpId = it.id }
+        rows.lastOrNull()?.let { it.nextFocusDownId = it.id }
+        // side-by-side buttons (Cancel / Clear) still move left and right between each other
+        rows.zipWithNext().forEach { (x, y) -> if (x.parent === y.parent && x.parent !== menuPanel) { x.nextFocusRightId = y.id; y.nextFocusLeftId = x.id } }
+    }
+
+    /** "Add to Favourites" is disabled (not focusable) on Home, so start on the first item that can take focus. */
+    private fun firstMenuItem(): View? = (0 until menuPanel.childCount).map { menuPanel.getChildAt(it) }.firstOrNull { it.isFocusable }
 
     private fun closeMenu() {
         if (!menuOpen()) return
@@ -1377,9 +2158,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         item(R.drawable.ic_desktop, "Desktop site", if (prefs.desktopMode) "On" else "Off") {
             prefs.desktopMode = !prefs.desktopMode; applyUserAgent(); if (hasPage()) webView.reload(); buildMenu()
         }
+        item(R.drawable.ic_history, "History") { showHistory() }
         item(R.drawable.ic_phone, "Phone remote") { showPhoneRemote() }
+        item(R.drawable.ic_wifi, "Share Wi-Fi") { showShareWifi() }
         item(R.drawable.ic_delete, "Clear browsing data…") { showClearMenu() }
         item(R.drawable.ic_settings, "Settings") { closeMenu(); showSettings() }
+        item(R.drawable.ic_info, "About mkTV", currentVersion) { showAboutMenu() }
+        trapMenuFocus()
         if (focusedTag != null) menuPanel.findViewWithTag<View>(focusedTag)?.requestFocus()
     }
 
@@ -1388,10 +2173,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private var clearHistory = true
     private var clearCookies = false
     private var clearCache = true
-    private var inClearMenu = false
+    private var inSubMenu = false
 
     private fun showClearMenu() {
-        inClearMenu = true
+        inSubMenu = true
         menuPanel.removeAllViews()
         menuPanel.addView(TextView(this).apply {
             text = "Clear browsing data"
@@ -1421,7 +2206,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             row.setOnClickListener { set(!get()); paint() }
             menuPanel.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        check("History", "Back/forward history and Recently visited", { clearHistory }) { clearHistory = it }
+        check("History", "Back/forward history, History and Recently visited", { clearHistory }) { clearHistory = it }
         check("Cookies & site data", "Signs you out of most sites", { clearCookies }) { clearCookies = it }
         check("Cached images & files", "Frees space; pages load slower once", { clearCache }) { clearCache = it }
         val buttons = LinearLayout(this).apply {
@@ -1436,11 +2221,61 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             isClickable = true; isFocusable = true
             setOnClickListener { onClick() }
         }
-        buttons.addView(button("Cancel", R.drawable.toolbar_button, android.graphics.Color.WHITE) { inClearMenu = false; buildMenu(); menuPanel.getChildAt(0)?.requestFocus() },
+        buttons.addView(button("Cancel", R.drawable.toolbar_button, android.graphics.Color.WHITE) { inSubMenu = false; buildMenu(); firstMenuItem()?.requestFocus() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)))
         buttons.addView(button("Clear", R.drawable.btn_danger, 0xFFFCA5A5.toInt()) { clearData() },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)).apply { marginStart = dp(10) })
         menuPanel.addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        trapMenuFocus()
+        menuPanel.getChildAt(1)?.requestFocus()
+    }
+
+    // ---- About (inside the ⋮ menu): version, update, links ----
+
+    private fun showAboutMenu() {
+        inSubMenu = true
+        menuPanel.removeAllViews()
+        menuPanel.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(8))
+            addView(android.widget.ImageView(context).apply { setImageResource(R.mipmap.ic_launcher) }, LinearLayout.LayoutParams(dp(48), dp(48)))
+            addView(textBlock("mkTV", "Version $currentVersion · by MKTVHub").apply { setPadding(dp(14), 0, 0, 0) })
+        })
+        fun row(icon: Int, title: String, sub: String, onClick: (TextView) -> Unit) {
+            val r = rowContainer().apply { minimumHeight = dp(56); isClickable = true; isFocusable = true; tag = "about:$title" }
+            r.addView(android.widget.ImageView(this).apply { setImageResource(icon) }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            val block = textBlock(title, sub).apply { setPadding(dp(14), 0, 0, 0) }
+            r.addView(block, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            r.setOnClickListener { onClick(block.getChildAt(0) as TextView) }
+            menuPanel.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        val update = availableUpdate()
+        row(R.drawable.ic_update,
+            if (checkingUpdate) "Checking…" else if (update != null) "Update to ${update.version}" else "Check for updates",
+            when {
+                update != null -> "Downloads from GitHub, then Android asks you to install it"
+                prefs.lastUpdateCheck == 0L -> "Not checked yet"
+                else -> "Up to date · checked " + android.text.format.DateUtils.getRelativeTimeSpanString(prefs.lastUpdateCheck)
+            }) { title ->
+            if (update != null) startUpdate(update, title)
+            else {
+                title.text = "Checking…"
+                checkForUpdate(force = true) {
+                    if (menuOpen() && inSubMenu) { showAboutMenu(); menuPanel.findViewWithTag<View>("about:" + (availableUpdate()?.let { "Update to ${it.version}" } ?: "Check for updates"))?.requestFocus() }
+                }
+            }
+        }
+        fun open(url: String) { inSubMenu = false; closeMenu(); closeShortcuts(); load(url) }
+        row(R.drawable.ic_home, "Website", "mktvhub.github.io") { open("https://mktvhub.github.io") }
+        row(R.drawable.ic_star, "Star mkTV on GitHub", "Free and ad-free: a star helps others find it") { open("https://github.com/MKTVHub/mkTV") }
+        row(R.drawable.ic_grid, "Source code & releases", "github.com/MKTVHub/mkTV/releases") { open("https://github.com/MKTVHub/mkTV/releases") }
+        menuPanel.addView(TextView(this).apply {
+            text = "Free and open source · © MKTVHub"
+            setTextColor(0xFF6B7280.toInt()); textSize = 12f
+            setPadding(dp(14), dp(8), dp(14), dp(6))
+        })
+        trapMenuFocus()
         menuPanel.getChildAt(1)?.requestFocus()
     }
 
@@ -1449,6 +2284,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (clearHistory) {
             listOfNotNull(normalWebView, webView).forEach { it.clearHistory() }
             prefs.recent = emptyList()
+            prefs.history = emptyList()
             what += "history"
         }
         if (clearCookies) {
@@ -1460,7 +2296,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             webView.clearCache(true)
             what += "cache"
         }
-        inClearMenu = false
+        inSubMenu = false
         closeMenu()
         updateNav()
         note(if (what.isEmpty()) "Nothing selected" else "Cleared " + what.joinToString(", "))
@@ -1484,7 +2320,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         if (overlayOpen()) showBar(autoHide = false) else scheduleHideBar(2500)
         webContainer.descendantFocusability =
             if (overlayOpen()) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
-        if (focusTarget != null) focusTarget.requestFocus() else if (!overlayOpen()) webView.requestFocus()
+        // requestFocusFromTouch: a mouse click or tap leaves touch mode on, where a plain
+        // requestFocus() fails and the remote's keys would still go to the page behind
+        if (focusTarget != null) focusTarget.requestFocusFromTouch() else if (!overlayOpen()) webView.requestFocus()
         refreshCursor()
     }
 
@@ -1531,8 +2369,18 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             if (event.action == KeyEvent.ACTION_UP) toggleMenu()
             return true
         }
+        // Remote's search/mic key, where the system passes it to apps: voice search from anywhere.
+        if (event.keyCode == KeyEvent.KEYCODE_SEARCH) {
+            if (event.action == KeyEvent.ACTION_UP) startVoice()
+            return true
+        }
         // Toolbar / overlays / bottom bar: plain TV focus navigation.
         if (!pageActive()) {
+            // ▼ from the address field goes into its suggestions, not to the page.
+            if (suggestOpen() && f === urlField && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+                if (down) suggestPanel.findViewWithTag<View>("sug:0")?.requestFocus()
+                return true
+            }
             val leaving = event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && down && !overlayOpen() &&
                 (f === urlField || (isInside(toolbar, f) && f !is EditText))
             if (leaving) { leaveToPage(); return true }
@@ -1769,6 +2617,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         // Overlay panels scroll themselves; the page underneath shouldn't move.
         val overlay = when {
             settingsPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.settingsScroll)
+            historyPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.historyScroll)
             shortcutsPanel.visibility == View.VISIBLE -> findViewById<View>(R.id.shortcutsScroll)
             else -> null
         }
@@ -1995,14 +2844,20 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     override fun onBackPressed() {
         when {
             customView != null -> exitFullscreen(notifyPage = true)
+            suggestOpen() && isInside(suggestPanel, currentFocus) -> urlField.requestFocus()
+            suggestOpen() -> hideSuggestions()
+            wifiPanel.visibility == View.VISIBLE && currentFocus is EditText -> { hideKeyboard(currentFocus as EditText); wifiPanel.requestFocus() }
+            wifiPanel.visibility == View.VISIBLE -> closeShareWifi()
             remotePanel.visibility == View.VISIBLE -> closePhoneRemote()
-            menuOpen() && inClearMenu -> { inClearMenu = false; buildMenu(); menuPanel.getChildAt(0)?.requestFocus() }
+            menuOpen() && inSubMenu -> { inSubMenu = false; buildMenu(); firstMenuItem()?.requestFocus() }
             menuOpen() -> closeMenu()
             watching && theater -> toggleTheater()
             watching -> exitWatch()
             settingsPanel.visibility == View.VISIBLE -> closeSettings()
+            historyPanel.visibility == View.VISIBLE -> closeHistory()
             shieldPanel.visibility == View.VISIBLE -> closeShieldPanel()
             shortcutsPanel.visibility == View.VISIBLE && editingShortcuts -> { editingShortcuts = false; renderShortcuts() }
+            shortcutsPanel.visibility == View.VISIBLE && editingPopular -> { editingPopular = false; renderShortcuts(); findViewById<View>(R.id.popularEdit).requestFocus() }
             shortcutsPanel.visibility == View.VISIBLE && hasPage() -> closeShortcuts()
             isInside(toolbar, currentFocus) -> leaveToPage()
             webView.canGoBack() -> webView.goBack()
@@ -2014,6 +2869,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // endregion
 
     // region Helpers
+
+    /** Turns address-bar input into a URL: adds https:// or searches with the chosen engine. */
+    private fun normalizeInput(input: String): String =
+        HostRules.stripTracking(WebSearch.normalize(input, WebSearch.engine(prefs.searchEngine)))
 
     private fun isKeyboardVisible(): Boolean =
         ViewCompat.getRootWindowInsets(root)?.isVisible(WindowInsetsCompat.Type.ime()) == true
@@ -2080,15 +2939,6 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     // endregion
 
     companion object {
-        /** Curated "Popular" row on the home screen. */
-        val POPULAR = listOf(
-            "YouTube" to "https://www.youtube.com/tv",
-            "YouTube Music" to "https://music.youtube.com/",
-            "TikTok" to "https://www.tiktok.com/foryou",
-            "Twitch" to "https://www.twitch.tv/",
-            "Dailymotion" to "https://www.dailymotion.com/",
-        )
-
         private const val PRIVATE_PROFILE = "private"
 
         /** A Smart-TV browser UA: YouTube serves its remote-friendly TV interface to it. */
@@ -2100,15 +2950,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         private const val DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
-        /** Turns address-bar input into a URL: adds https:// or makes it a search. */
-        fun normalizeInput(input: String): String = HostRules.stripTracking(normalizeRaw(input))
-
-        private fun normalizeRaw(input: String): String {
-            val t = input.trim()
-            if (t.isEmpty()) return "about:blank"
-            if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://").containsMatchIn(t) || t.startsWith("about:")) return t
-            if (!t.contains(' ') && (t.contains('.') || t.startsWith("localhost"))) return "https://$t"
-            return "https://www.google.com/search?q=" + Uri.encode(t)
-        }
+        private const val REQ_VOICE = 41
+        private const val HISTORY_RENDER_MAX = 150
     }
 }
