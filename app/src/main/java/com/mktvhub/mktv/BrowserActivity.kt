@@ -1068,7 +1068,10 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         editingContinue = false
         openFolder = -1
         selectedFav = null
+        // Already on Home (e.g. Home pressed again on the phone): refresh in place, focus stays where it is.
+        val showing = shortcutsPanel.visibility == View.VISIBLE && isInside(shortcutsPanel, currentFocus)
         renderShortcuts()
+        if (showing) { onOverlayChanged(currentFocus?.takeIf { isInside(shortcutsPanel, it) } ?: firstHomeTile()); return }
         shortcutsPanel.visibility = View.VISIBLE
         findViewById<View>(R.id.shortcutsScroll).scrollTo(0, 0)
         onOverlayChanged(firstHomeTile() ?: findViewById(R.id.homeRemote))
@@ -1085,7 +1088,9 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun hasPage() = !webView.url.isNullOrBlank() && webView.url != "about:blank"
 
     private fun renderShortcuts() {
-        val focusedTag = currentFocus?.tag as? String
+        // Taken before anything is rebuilt: a removed tile is no longer inside the panel.
+        val focused = currentFocus?.takeIf { isInside(shortcutsPanel, it) }
+        val focusedTag = focused?.tag as? String
         val tree = prefs.bookmarks
         if (tree.getOrNull(openFolder) !is Bookmarks.Folder) openFolder = -1
         val folder = tree.getOrNull(openFolder) as? Bookmarks.Folder
@@ -1120,12 +1125,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val popular = prefs.popular
         findViewById<TextView>(R.id.popularEdit).text = if (editingPopular) "Stop editing" else "Edit"
         findViewById<View>(R.id.popularEmpty).visibility = if (popular.isEmpty() && !editingPopular) View.VISIBLE else View.GONE
-        fillGrid(R.id.popularGrid, popular, height = 104, iconSize = 44, kind = "pop")
+        fillGrid(R.id.popularGrid, popular, height = 104, iconSize = 44, kind = "pop", state = "$editingPopular")
         renderPopularAdd(popular)
         val watching = continueList()
         if (watching.isEmpty()) editingContinue = false
         findViewById<TextView>(R.id.cwEdit).text = if (editingContinue) "Stop editing" else "Edit"
-        fillGrid(R.id.cwGrid, watching.map { it.title to it.url }, height = 150, iconSize = 44, kind = "cw") { i, _, _ -> continueTile(watching[i]) }
+        fillGrid(R.id.cwGrid, watching.map { it.title to it.url }, height = 150, iconSize = 44, kind = "cw",
+            state = "$editingContinue|" + watching.joinToString(",") { "${it.position.toLong()}/${it.duration.toLong()}" }) { i, _, _ -> continueTile(watching[i]) }
         arrangeHome()
         // Shown only when there is something to continue (arrangeHome made every section that isn't hidden visible).
         if (watching.isEmpty()) findViewById<View>(R.id.cwSection).visibility = View.GONE
@@ -1134,30 +1140,32 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         val recent = if (inPrivate || "rec" in prefs.hiddenSections) emptyList() else prefs.recent.filterNot { r -> favs.any { it.second == r.second } }
             .take(findViewById<android.widget.GridLayout>(R.id.recentGrid).columnCount)
         findViewById<View>(R.id.recentTitle).visibility = if (recent.isEmpty()) View.GONE else View.VISIBLE
-        fillGrid(R.id.recentGrid, recent, height = 130, iconSize = 44, kind = "rec")
+        fillGrid(R.id.recentGrid, recent, height = 130, iconSize = 44, kind = "rec", state = "$inPrivate")
 
-        // Keep focus where it was after a re-render (e.g. deleting a favourite in Edit mode).
-        if (focusedTag != null && focusedTag.startsWith("fav:")) {
-            val grid = findViewById<ViewGroup>(R.id.shortcutsGrid)
-            val idx = focusedTag.substringAfter("fav:").substringBefore('|').toIntOrNull() ?: 0
-            (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1)) ?: findViewById(R.id.shortcutsEdit)).requestFocus()
-        }
-        if (focusedTag != null && focusedTag.startsWith("pop:")) {
-            val grid = findViewById<ViewGroup>(R.id.popularGrid)
-            val idx = focusedTag.substringAfter("pop:").substringBefore('|').toIntOrNull() ?: 0
-            (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1)) ?: findViewById(R.id.popularEdit)).requestFocus()
-        }
-        if (focusedTag != null && focusedTag.startsWith("cw:")) {
-            val grid = findViewById<ViewGroup>(R.id.cwGrid)
-            val idx = focusedTag.substringAfter("cw:").substringBefore('|').toIntOrNull() ?: 0
-            (grid.getChildAt(idx.coerceAtMost(grid.childCount - 1))?.takeIf { it.isShown } ?: firstHomeTile() ?: findViewById(R.id.homeRemote)).requestFocus()
-        }
-        if (focusedTag != null && focusedTag.startsWith("favact:"))
-            (favActions.findViewWithTag<View>(focusedTag)?.takeIf { it.isFocusable } ?: findViewById<ViewGroup>(R.id.shortcutsGrid).getChildAt(0)
-                ?: findViewById(R.id.shortcutsEdit)).requestFocus()
-        if (focusedTag != null && focusedTag.startsWith("sug:"))
-            (findViewById<ViewGroup>(R.id.popularSuggest).getChildAt(0) ?: findViewById<View>(R.id.popularAddField)).requestFocus()
+        // Keep focus where it was after a re-render (an icon arriving, deleting a favourite in Edit mode), for every
+        // kind of tile. A row that didn't change wasn't rebuilt, so its focused tile is simply still there.
+        if (focused != null) restoreHomeFocus(focused, focusedTag)
         if (!inPrivate) fetchMissingIcons(popular + favs + recent + watching.map { it.title to it.url })
+    }
+
+    /** After [renderShortcuts]: back to [was] if it's still on screen, else to the tile now in its place, else to its row's button. */
+    private fun restoreHomeFocus(was: View, tag: String?) {
+        if (was.isAttachedToWindow && was.isShown && was.isFocusable) { if (currentFocus !== was) was.requestFocus(); return }
+        val tagged = HashMap<String, View>()
+        fun collect(v: View) {
+            (v.tag as? String)?.let { if (v.isShown && v.isFocusable) tagged[it] = v }
+            if (v is ViewGroup) for (i in 0 until v.childCount) collect(v.getChildAt(i))
+        }
+        collect(shortcutsPanel)
+        HomeFocus.pick(tag, tagged.keys.toList())?.let { tagged[it]?.requestFocus(); return }
+        when (tag?.substringBefore(':')) {
+            "fav" -> findViewById<View>(R.id.shortcutsEdit).takeIf { it.isShown } ?: findViewById(R.id.addField)
+            "pop" -> findViewById(R.id.popularEdit)
+            "cw" -> firstHomeTile() ?: findViewById(R.id.homeRemote)
+            "favact" -> findViewById<ViewGroup>(R.id.shortcutsGrid).getChildAt(0) ?: findViewById(R.id.shortcutsEdit)
+            "sug" -> findViewById<ViewGroup>(R.id.popularSuggest).getChildAt(0) ?: findViewById(R.id.popularAddField)
+            else -> firstHomeTile() ?: findViewById(R.id.homeRemote) // e.g. Recently visited emptied
+        }?.requestFocus()
     }
 
     /** Edit mode: one-press chips for well-known sites not already in Popular, plus a free address field. */
@@ -1174,9 +1182,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
     private fun arrangeHome() {
         val parent = findViewById<ViewGroup>(R.id.popularSection).parent as ViewGroup
         val views = prefs.homeOrder.map { sectionView(it) }
-        val at = views.minOf { parent.indexOfChild(it) }
-        views.forEach { parent.removeView(it) }
-        views.forEachIndexed { i, v -> parent.addView(v, at + i) }
+        // Only when the order changed: taking a section out drops the remote's focus from whatever is in it.
+        if (views.sortedBy { parent.indexOfChild(it) } != views) {
+            val at = views.minOf { parent.indexOfChild(it) }
+            views.forEach { parent.removeView(it) }
+            views.forEachIndexed { i, v -> parent.addView(v, at + i) }
+        }
         val hidden = prefs.hiddenSections
         prefs.homeOrder.forEach { sectionView(it).visibility = if (it in hidden) View.GONE else View.VISIBLE }
         renderSectionTools("cw", R.id.cwTools, editingContinue)
@@ -1255,9 +1266,17 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         note("Added $title to Popular")
     }
 
+    /** Last [HomeFocus.signature] each Home row was built with. */
+    private val gridSigs = HashMap<Int, String>()
+
+    /** [state]: anything else the tiles show or do (edit mode, selection, progress); same rows and state, nothing rebuilt. */
     private fun fillGrid(gridId: Int, items: List<Pair<String, String>>, height: Int, iconSize: Int, kind: String,
-                         tileFor: ((Int, String, String) -> View)? = null) {
+                         state: String = "", tileFor: ((Int, String, String) -> View)? = null) {
         val grid = findViewById<android.widget.GridLayout>(gridId)
+        val sig = HomeFocus.signature(kind, items, items.map { faviconFile(Uri.parse(it.second).host)?.exists() == true },
+            "$state|${resources.displayMetrics.widthPixels}")
+        if (gridSigs[gridId] == sig && grid.childCount == items.size) return
+        gridSigs[gridId] = sig
         grid.removeAllViews()
         val cols = grid.columnCount
         val gridWidth = resources.displayMetrics.widthPixels - dp(128)
@@ -1379,7 +1398,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
             favExpanded -> all + ("Show less" to "more:less")
             else -> all.take(cols - 1) + ("Show all" to "more:all")
         }
-        fillGrid(R.id.shortcutsGrid, items, height = 150, iconSize = 56, kind = "fav") { i, title, url ->
+        val state = "$editingShortcuts|$openFolder|$sel|$favExpanded|" + nodes.joinToString(",") { (it as? Bookmarks.Folder)?.items?.size?.toString() ?: "-" }
+        fillGrid(R.id.shortcutsGrid, items, height = 150, iconSize = 56, kind = "fav", state = state) { i, title, url ->
             if (url.startsWith("more:")) return@fillGrid moreTile(title, if (favExpanded) "" else "${all.size} sites",
                 if (favExpanded) R.drawable.ic_expand_less else R.drawable.ic_expand_more) {
                 favExpanded = !favExpanded
@@ -1645,16 +1665,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         prefs.history = History.add(prefs.history, History.Entry(entry.first, url, System.currentTimeMillis()))
     }
 
-    private val iconFetchTried = HashSet<String>()
-
-    /** Grabs the site's own touch icon / favicon for tiles we haven't seen an icon for yet. */
+    /** Grabs the site's own touch icon / favicon for tiles we haven't seen an icon for yet (each host once per run). */
     private fun fetchMissingIcons(items: List<Pair<String, String>>) {
-        val hosts = items.mapNotNull { Uri.parse(it.second).host }
-            .filter { h -> faviconFile(h)?.exists() == false && iconFetchTried.add(h) }
+        val hosts = SiteIcons.claim(items.mapNotNull { Uri.parse(it.second).host }) { faviconFile(it)?.exists() == true }
         if (hosts.isEmpty()) return
         val ua = webView.settings.userAgentString ?: "" // WebView may only be touched on the UI thread
         kotlin.concurrent.thread(name = "icons") {
-            var any = false
+            val saved = mutableListOf<String>()
             hosts.forEach { host ->
                 for (path in iconCandidates(host) + listOf("/apple-touch-icon.png", "/favicon.ico")) {
                     val bmp = runCatching {
@@ -1665,14 +1682,21 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                         try { if (c.responseCode in 200..299) c.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) } else null } finally { c.disconnect() }
                     }.getOrNull()
                     if (bmp != null && bmp.width >= 16) {
-                        faviconFile(host)?.outputStream()?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-                        any = true
+                        val ok = runCatching { faviconFile(host)?.outputStream()?.use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) } == true }.getOrDefault(false)
+                        if (ok) SiteIcons.key(host)?.let(saved::add)
                         break
                     }
                 }
             }
-            if (any) runOnUiThread { if (shortcutsPanel.visibility == View.VISIBLE) renderShortcuts() }
+            // Only rows showing one of the new icons are rebuilt (fillGrid skips the rest), and focus stays on its tile.
+            runOnUiThread { if (shortcutsPanel.visibility == View.VISIBLE && SiteIcons.changesShown(saved, homeHosts())) renderShortcuts() }
         }
+    }
+
+    /** Hosts of the tiles on Home right now. */
+    private fun homeHosts(): List<String?> = listOf(R.id.popularGrid, R.id.cwGrid, R.id.shortcutsGrid, R.id.recentGrid).flatMap { id ->
+        val grid = findViewById<ViewGroup>(id)
+        (0 until grid.childCount).map { i -> (grid.getChildAt(i).tag as? String)?.substringAfter('|', "")?.let { Uri.parse(it).host } }
     }
 
     /** Icons a site lists in its home page's <link rel="icon"/"apple-touch-icon">, largest first. Network thread only. */
@@ -1750,7 +1774,7 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     /** One icon per host (minus "www."), so youtube.com and music.youtube.com keep their own icons. */
     private fun faviconFile(host: String?): java.io.File? {
-        val key = host?.lowercase()?.removePrefix("www.")?.takeIf { it.contains('.') } ?: return null
+        val key = SiteIcons.key(host) ?: return null
         val dir = java.io.File(filesDir, "icons2")
         if (!dir.exists()) { java.io.File(filesDir, "icons").deleteRecursively(); dir.mkdirs() } // old per-site cache
         return java.io.File(dir, "$key.png")
