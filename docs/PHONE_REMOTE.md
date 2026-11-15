@@ -76,7 +76,7 @@ Live typing is incremental: the phone remembers what it has sent, and on each ch
 
 **`/api/open`**: loads `url` in the current WebView, after the same normalisation as the address bar (so plain words become a search). The result must be an `http` or `https` URL (otherwise the TV shows "The phone can only open web pages"); `url` is capped at 2,048 characters.
 
-**`/api/move`**: moves the pointer by `dx`, `dy` phone pixels (each clamped to ±400; non-numbers count as 0), scaled by about 1.8 dp per pixel. Pushing past a screen edge scrolls the page, as with a held D-pad. Ignored unless `pointer` is true in `/api/state`.
+**`/api/move`**: moves the pointer by `dx`, `dy` phone pixels (each clamped to ±400; non-numbers count as 0), scaled by about 1.8 dp per pixel at the Normal pointer speed (0.6× at Slow, 1.6× at Fast; Settings → Navigation → Pointer speed). Pushing past a screen edge scrolls the page, as with a held D-pad. Ignored unless `pointer` is true in `/api/state`.
 
 **`/api/media`**: `action` is `seek` (with `to` in seconds, 0 to 172,800, clamped to the video's duration), `fullscreen` (the same full screen toggle as ▼ in watch mode) or `captions` (toggles the first `subtitles`/`captions` `<track>`; sites that draw their own captions are not covered). Play/pause and ±10 s use `/api/key` (`playpause`, `rew`, `ff`), the same path as the TV remote.
 

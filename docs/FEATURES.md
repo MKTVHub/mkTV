@@ -18,9 +18,9 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 **What.** The D-pad moves a mouse pointer that speeds up while held. Push against a screen edge to scroll. OK clicks at the pointer. The pointer fades after 6 seconds of inactivity. Moving it to the top edge shows the toolbar.
 
-**How.** `CursorView` runs a `Choreographer` frame loop while a direction is held, ramping speed from 260 to 1,300 dp/s over 0.9 s. At an edge it calls `onEdgeScroll`, which sends a mouse wheel event at the pointer.
+**How.** `CursorView` runs a `Choreographer` frame loop while a direction is held. With **Pointer acceleration** on (default) speed ramps from 260 to 1,300 dp/s over 0.9 s; off, it moves at a steady 600 dp/s. **Pointer speed** (Slow / Normal / Fast) scales that by 0.6× / 1× / 1.6×, and also scales phone touchpad moves (1.8 dp per phone px at Normal). Both are in Settings → Navigation, apply at once and are saved in `Prefs` (`pointerSpeed`, `pointerAccel`). The math is in `PointerMotion` (unit-tested). At an edge it calls `onEdgeScroll`, which sends a mouse wheel event at the pointer.
 
-**Where.** `CursorView.kt`, `BrowserActivity.scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation or Settings → Navigation (`Prefs.navMode`).
+**Where.** `CursorView.kt`, `PointerMotion.kt`, `BrowserActivity.applyPointerTuning`, `scrollAtCursor`, `touchAt`. Switch modes in ⋮ → Navigation or Settings → Navigation (`Prefs.navMode`).
 
 **Limits.** Slower than jump mode for long pages. Hover-only menus get a touch, not a hover.
 
@@ -266,7 +266,7 @@ Sections and what they control (`renderSettings`):
 
 | Section | Settings |
 |---|---|
-| Navigation | Jump between items / Mouse pointer |
+| Navigation | Jump between items / Mouse pointer; Pointer speed (Slow / Normal / Fast); Pointer acceleration |
 | Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`) |
 | Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |

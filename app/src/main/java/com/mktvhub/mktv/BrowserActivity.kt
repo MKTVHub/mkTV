@@ -2094,6 +2094,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 setTextColor(0xFF9CA3AF.toInt()); textSize = 13f
                 setPadding(dp(16), dp(10), dp(16), dp(8))
             })
+            card.addView(textBlock("Pointer speed", "How fast the pointer moves in pointer mode and with the phone touchpad").apply {
+                setPadding(dp(16), dp(12), dp(16), 0)
+            })
+            card.addView(segmented(PointerMotion.LEVELS, prefs.pointerSpeed,
+                icons = listOf(R.drawable.ic_speed_slow, R.drawable.ic_speed, R.drawable.ic_speed_fast)) { i ->
+                prefs.pointerSpeed = i; applyPointerTuning(); renderSettings()
+            })
+            card.addView(toggleRow("Pointer acceleration", "Starts slow for precision and speeds up while you hold a direction. Off: one steady speed.",
+                prefs.pointerAccel) { prefs.pointerAccel = it; applyPointerTuning() })
         }
 
         section(c, "Start screen") { card ->
@@ -2345,12 +2354,12 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
         }
     }
 
-    private fun segmented(options: List<String>, selected: Int, first: Boolean = false, onSelect: (Int) -> Unit): View = LinearLayout(this).apply {
+    private fun segmented(options: List<String>, selected: Int, first: Boolean = false, icons: List<Int>? = null, onSelect: (Int) -> Unit): View = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         setPadding(dp(16), dp(12), dp(16), dp(4))
         options.forEachIndexed { i, label ->
             addView(TextView(context).apply {
-                text = label
+                text = icons?.getOrNull(i)?.let { iconText(it, label, 20) } ?: label
                 gravity = android.view.Gravity.CENTER
                 setTextColor(if (i == selected) android.graphics.Color.WHITE else 0xFFD1D5DB.toInt()); textSize = 15f
                 setTypeface(typeface, if (i == selected) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
@@ -2361,6 +2370,13 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
                 setOnClickListener { if (i != selected) onSelect(i) }
             }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { if (i > 0) marginStart = dp(8) })
         }
+    }
+
+    /** "[icon] label" as one centred run of text, for buttons that are wider than their content. */
+    private fun iconText(icon: Int, label: String, sizeDp: Int): CharSequence {
+        val d = androidx.core.content.ContextCompat.getDrawable(this, icon)!!.mutate().apply { setBounds(0, 0, dp(sizeDp), dp(sizeDp)) }
+        val align = if (android.os.Build.VERSION.SDK_INT >= 29) android.text.style.DynamicDrawableSpan.ALIGN_CENTER else android.text.style.DynamicDrawableSpan.ALIGN_BOTTOM
+        return android.text.SpannableString("\u00A0  $label").apply { setSpan(android.text.style.ImageSpan(d, align), 0, 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
     }
 
     private fun subheading(t: String) = TextView(this).apply {
@@ -3164,8 +3180,8 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     override fun onMove(dx: Double, dy: Double) = runOnUiThread {
         if (!pointerActive()) return@runOnUiThread
-        // Phone px are tiny next to a TV: about 1.8 dp of pointer per px of finger crosses the screen in two swipes.
-        val gain = 1.8f * resources.displayMetrics.density
+        // Phone px are tiny next to a TV: about 1.8 dp of pointer per px of finger (Normal) crosses the screen in two swipes.
+        val gain = PointerMotion.touchGain(prefs.pointerSpeed) * resources.displayMetrics.density
         cursor.moveBy(dx.toFloat() * gain, dy.toFloat() * gain)
     }
 
@@ -3554,8 +3570,15 @@ class BrowserActivity : Activity(), RemoteServer.Listener {
 
     private fun applyNavMode() {
         cursor.jumpMode = jumpMode
+        applyPointerTuning()
         if (!jumpMode) cursor.showRing(null)
         refreshCursor()
+    }
+
+    /** Settings → Navigation → Pointer speed / acceleration, applied live (the frame loop reads these fields). */
+    private fun applyPointerTuning() {
+        cursor.speedLevel = prefs.pointerSpeed
+        cursor.accelerate = prefs.pointerAccel
     }
 
     /** Pointer/ring only shows while the page has the remote's attention. */

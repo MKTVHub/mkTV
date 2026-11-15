@@ -11,7 +11,7 @@ import android.view.View
 
 /**
  * On-screen pointer driven by the D-pad. Movement runs on a Choreographer loop while
- * a direction is held and accelerates the longer it is held. When the pointer is pushed
+ * a direction is held and (unless turned off) accelerates the longer it is held. When the pointer is pushed
  * against an edge, [onEdgeScroll] is called so the page can scroll.
  */
 class CursorView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
@@ -40,9 +40,9 @@ class CursorView @JvmOverloads constructor(context: Context, attrs: AttributeSet
     var onMove: ((x: Float, y: Float) -> Unit)? = null
 
     private val density = resources.displayMetrics.density
-    private val minSpeed = 260f * density   // dp per second
-    private val maxSpeed = 1300f * density
-    private val rampMs = 900f
+    /** Settings → Navigation; set by the activity (not read from Prefs every frame). See [PointerMotion]. */
+    var speedLevel = PointerMotion.NORMAL
+    var accelerate = true
 
     private var left = false; private var right = false; private var up = false; private var down = false
     private var heldSince = 0L
@@ -112,7 +112,7 @@ class CursorView @JvmOverloads constructor(context: Context, attrs: AttributeSet
             val dt = if (lastFrameNs == 0L) 1f / 60 else ((now - lastFrameNs) / 1e9f).coerceAtMost(0.05f)
             lastFrameNs = now
             val held = (System.currentTimeMillis() - heldSince).coerceAtLeast(0)
-            val speed = minSpeed + (maxSpeed - minSpeed) * (held / rampMs).coerceAtMost(1f)
+            val speed = PointerMotion.speed(held, speedLevel, accelerate) * density
             val dx = (if (right) 1 else 0) - (if (left) 1 else 0)
             val dy = (if (down) 1 else 0) - (if (up) 1 else 0)
             val nx = (x0 + dx * speed * dt).coerceIn(0f, width - 1f)

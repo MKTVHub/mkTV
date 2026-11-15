@@ -39,6 +39,7 @@ app/src/main/
     History.kt            Pure: browsing history list, search, day labels
     Updates.kt            Pure: GitHub release parsing, version comparison
     PageZoom.kt           Pure: zoom levels, per-site zoom storage, full-screen fill fallback decision
+    PointerMotion.kt      Pure: pointer-mode speed levels, acceleration ramp, phone touchpad gain
     Bookmarks.kt          Pure: Favourites tree (links + one level of folders), JSON compatible with the old flat list
     Tabs.kt               Tab state + pure TabPolicy (live WebView limit, close order, low-memory rule)
     Downloads.kt          Pure: download file names, Content-Disposition, sizes, data: URLs, the saved Downloads list
@@ -54,7 +55,7 @@ app/src/main/
     remote.html           Self-contained phone remote page served by RemoteServer
   res/layout/activity_browser.xml   All browser views: toolbar, panels, dock, snackbar, fullscreen container, cursor
   res/xml/network_security_config.xml, file_paths.xml (FileProvider for downloaded updates and Android 7–9 downloads)
-app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, BookmarksTest, TabsTest, DownloadsTest
+app/src/test/java/com/mktvhub/mktv/   JVM unit tests: HostRulesTest, FilterListsTest, WebSearchTest, HistoryTest, UpdatesTest, WifiQrTest, RemoteInputTest, PageZoomTest, PointerMotionTest, BookmarksTest, TabsTest, DownloadsTest
 ```
 
 `BrowserActivity.kt` is large. Navigate it by its markers, not by line numbers (it changes often):
