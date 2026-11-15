@@ -7,7 +7,7 @@ Status: **shipped (first version).** Implementation: `app/src/main/java/com/mktv
 Typing on a TV with a D-pad is slow. The phone remote lets any phone on the same Wi-Fi control mkTV from its web browser, with no app to install.
 
 1. On the TV: ⋮ → **Phone remote**.
-2. mkTV starts a small HTTP server on port **8765** and shows a QR code for
+2. mkTV starts a small HTTP server on port **8765** and shows a QR code (with the mkTV logo in the centre) for
    `http://<tv-ip>:8765/?t=<token>`, plus the address in text for typing by hand.
 3. The phone scans the QR code and opens the remote page.
 4. The remote page offers:
@@ -148,6 +148,7 @@ As of 2026-11-15 (tested on an Android TV). Compared with this spec, `RemoteServ
 - **Port:** tries 8765, then 8766 to 8769 if the port is taken. The QR code always shows the port actually used.
 - **Token:** 26 characters from a 31-character alphabet (about 128 bits) from `SecureRandom`, compared in constant time (`MessageDigest.isEqual`). 10-character tokens saved by 1.1.0 stay valid until the next New code.
 - **Lifetime:** `Prefs.remoteEnabled` turns on the first time Phone remote opens; from then on `onStart` starts the server (retrying for a few seconds while the old socket closes) and `onStop` stops it. The token lives in `Prefs.remoteToken`. The address skips VPN tunnel interfaces. **New code** / **Unpair all phones** makes a new token. Settings → Phone remote has an on/off switch (off stops the server until Phone remote is opened again). Each new device (by IP address) gets a "New phone connected · <ip> · Unpair all" notice on the TV.
+- **Devices tab:** the panel has **Connect** and **Devices (n)** tabs. Devices lists each address that used the current code (label, address, last activity), newest first, each with **Disconnect**. Disconnect drops the device and refuses its address until the next New code (`RemoteServer.devices`, `RemoteServer.disconnect`). New code needs a second press to confirm.
 - **Network scope:** the server listens on all interfaces, with no source-address or `Host` header check.
 - No rate limiting.
 - Responses carry no CORS headers (good: other origins cannot read responses).

@@ -34,7 +34,7 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## ⋮ menu
 
-**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Tabs (n), Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Zoom (current level), Desktop site (On / Off), History, Phone remote, Share Wi-Fi, Clear browsing data…, Settings, About mkTV. Phone remote (see below). The menu scrolls when it is taller than the screen.
+**What.** Opened with the ⋮ button or the remote's Menu (or Bookmark) key. Items: Tabs (n), Add to / Remove from Favourites, Private browsing, Navigation (Jump / Pointer), Zoom (current level), Desktop site (On / Off), History, Downloads, Phone remote, Share Wi-Fi, Clear browsing data…, Settings, About mkTV. The menu scrolls when it is taller than the screen.
 
 **Where.** `buildMenu`, `showTabsMenu`, `showClearMenu`, `clearData`, `showZoomMenu`.
 
@@ -44,18 +44,20 @@ Each feature: what it does, how it works, where it lives in the code, and its kn
 
 ## Home screen
 
-**What.** The start screen (and the ⌂ button) shows three rows:
-- **Popular:** YouTube (opens `youtube.com/tv`, the TV interface), YouTube Music, TikTok, Twitch, Dailymotion.
+**What.** The start screen (and the ⌂ button) shows the mkTV logo over a soft violet glow, and three sections:
+- **Popular:** compact tiles, by default YouTube (opens `youtube.com/tv`, the TV interface), Netflix, Prime Video, Disney+, Spotify, YouTube Music, Twitch and TikTok. **Edit** lets you remove tiles and add others from one-press "＋" suggestions (`Prefs.POPULAR_SUGGESTIONS`, plus any default you removed).
 - **Favourites:** add with ⋮ → Add to Favourites, "☆ Add this page", or by typing an address. One level of **folders**: a folder tile shows how many sites it holds; OK opens it in the same grid, and Back (or "◀ Favourites") returns. Adding while a folder is open puts the site in that folder. In **Edit**, OK on a tile chooses it and shows its actions under the grid: ◀ Move / Move ▶ (reorder), a name field (rename), Move into a folder / Move out of folder, Open folder, Remove. "＋ New folder" sits in the section tools. Everything saves as you change it. Removing a folder keeps its sites: they go back to the top level.
 - **Recently visited:** up to 10 shown (12 stored), one per site, newest first, excluding favourites. Not shown in private mode.
 
-The header has **History** (see below) and **Private browsing** buttons. When a newer mkTV is available, an update card appears at the top (see [In-app updates](#in-app-updates)).
+**Sections.** In Edit, each section (Popular, Favourites) has ↑ Move up / ↓ Move down and Hide. Hidden sections come back from Settings → Start screen, which has a Show switch per section and Home screen layout → Reset (default order, all sections shown, default Popular sites).
+
+The header has **Phone remote**, **History** (see below) and **Private browsing** buttons. When a newer mkTV is available, an update card appears at the top (see [In-app updates](#in-app-updates)).
 
 Settings → Start screen can replace it with a fixed home page address.
 
-**How.** Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none.
+**How.** The glow is a drawable (`home_bg.xml`), so it costs no memory or start-up time. Tiles show a saved site icon or a coloured letter. Icons come from the page's favicon while you browse, or are fetched in the background (`/apple-touch-icon.png`, then `/favicon.ico`) for tiles that have none.
 
-**Where.** `// region Shortcuts` (Favourites folders and edit actions: `renderFavourites`, `renderFavActions`), `Bookmarks.kt` (pure tree operations, tested in `BookmarksTest`), `Prefs.bookmarks` (still stored under the old `shortcuts` key: links are `{title,url}`, a folder is `{title,items}`; old lists load unchanged), `Prefs.shortcuts` (flattened), `Prefs.recent`. The phone remote's `/api/home` lists favourites flattened, folders opened in place.
+**Where.** `// region Shortcuts` (`arrangeHome`, `renderSectionTools`, `renderPopularAdd`, `Prefs.homeOrder`, `Prefs.hiddenSections`, `Prefs.popular`; Favourites folders and edit actions: `renderFavourites`, `renderFavActions`), `Bookmarks.kt` (pure tree operations, tested in `BookmarksTest`), `Prefs.bookmarks` (still stored under the old `shortcuts` key: links are `{title,url}`, a folder is `{title,items}`; old lists load unchanged), `Prefs.shortcuts` (flattened), `Prefs.recent`. The phone remote's `/api/home` lists favourites flattened, folders opened in place.
 
 **Limits.** Once you make a folder, installing an older mkTV over this one is not supported: older builds can't read folders. The icon fetch contacts every site on the home screen once, including Popular sites you have never opened (not in private mode). See [PRIVACY.md](PRIVACY.md).
 
@@ -262,17 +264,21 @@ Private browsing has its own tabs (see [Tabs](#tabs)).
 
 ## Settings
 
-Sections and what they control (`renderSettings`):
+**What.** A full-screen page with a sidebar of sections on the left; the chosen section's settings show on the right. The mkTV version is shown at the bottom. Closing Settings with no page behind it returns to Home.
+
+Sections, in sidebar order (`SETTINGS_TABS`, `renderSettings`):
 
 | Section | Settings |
 |---|---|
 | Navigation | Jump between items / Mouse pointer |
-| Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`) |
+| Start screen | Home screen / Home page address, the address (default `https://www.google.com`, build-time `DEFAULT_HOME_URL`), Show Popular / Favourites / Recently visited, Home screen layout (current order; Reset) |
 | Search | Search engine (Google, DuckDuckGo, Bing, Brave, Startpage), Search suggestions (off by default) |
 | Protection | Block ads & trackers, Block pop-ups, Block sneaky redirects, list of paused sites with Resume |
-| Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
 | Blocklists | Total blocked domains and Update all; built-in filter lists (on/off, count, last update, Update); lists added by address (also Remove); Add a list by address; Never blocked (allowlist) with Allow <current site> and Allow a domain |
+| Privacy | Private browsing, Remove tracking codes from links, Block third-party cookies (off by default) |
+| Phone remote | On/off switch (turns on the first time you open ⋮ → Phone remote; off stops the server), Unpair all phones (New code), and a note to use it on home Wi-Fi |
 | Browsing | Auto-hide the top bar, Auto-unmute videos, Default zoom (− / + and Reset sites), Desktop sites, Clear browsing data (clears cookies, site storage, cache, history and recents; press twice to confirm) |
+| Downloads | Where files are saved, and Open (the Downloads list) |
 | Updates | Installed version and status, Check now / Update, Check for updates (daily, on by default) |
 
 Settings save as you change them. Closing Settings reloads the page if anything that needs a reload changed.
@@ -281,13 +287,19 @@ Settings save as you change them. Closing Settings reloads the page if anything 
 
 - **Address bar:** text without a scheme becomes `https://…` if it looks like a host, otherwise a search with the chosen engine (see above).
 - **Desktop site:** switches the user agent to desktop Chrome on Windows.
-- **Open a URL from another app or adb:** an intent with a data URI loads it.
+- **One mkTV (single instance):** the activity is `singleTask`, so opening a link from another app or adb (an intent with a data URI) never starts a second mkTV. The link opens in a new tab of the running mkTV, or in the current tab if it is still blank (`onNewIntent`).
 - **Exit:** Back on the first page asks "Press Back again to exit".
 
 ## Phone remote
 
-**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing seek bar while a video plays, and "open URL". No app install on the phone.
+**What.** ⋮ → Phone remote starts a small web server on the TV (port 8765, local network only) and shows a QR code. Scanning it opens a remote page in the phone's browser: D-pad or touchpad (moves the pointer in pointer mode), OK, Back, Home, Menu, media keys, volume and page up/down, live typing into the focused field, the TV's Home tiles, a Now playing seek bar while a video plays, and "open URL". No app install on the phone. The QR code has the mkTV logo in its centre.
+
+**Panel.** Two tabs: **Connect** (QR code, steps, address, Help, New code, Share Wi-Fi) and **Devices (n)**, which lists each phone or computer using the remote with the current code (address and last activity) with a **Disconnect** button. Disconnect refuses that address until the next New code (everyone shares one code, so the address is what can be shut out).
+
+**Pairing.** The pairing code is about 128 bits from `SecureRandom` and is kept across restarts, so a bookmarked remote page keeps working. **New code** (press twice to confirm) or Settings → Phone remote → Unpair all phones makes a new code and unpairs every phone. When a new device connects, the TV shows "New phone connected" with Unpair all. Settings → Phone remote has an on/off switch.
 
 **Where.** `RemoteServer.kt`, `assets/remote.html`, the phone remote section of `BrowserActivity` (`showPhoneRemote`, `onKey`, `onText`, `onOpen`, `onMove`, `onMedia`, `state`, `home`), `RemoteInput.kt`. Protocol, security model and current gaps: [PHONE_REMOTE.md](PHONE_REMOTE.md).
 
-**Limits.** Plain HTTP on the local network. In the current build the server keeps running until the app is closed, and the token stays the same for that app run.
+**Lifetime.** Once turned on, the server runs while mkTV is on screen and stops when mkTV goes to the background (`onStart` / `onStop`). The port and code stay the same.
+
+**Limits.** Plain HTTP on the local network, with no source-address or `Host` check and no rate limit; anyone on the network with the code can use it. Use it on home Wi-Fi, not guest or public networks.

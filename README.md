@@ -12,8 +12,8 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 
 - **Jump navigation.** ▲▼◀▶ move a highlight between links and buttons; OK clicks, hold OK to long-press. Hold ▼ or ▲ to jump to a site's fixed bottom or top bar. Prefer a mouse? Switch to **pointer mode**.
 - **Out of the way.** The top bar hides while you browse and comes back when you need it.
-- **Home screen.** Popular sites, your Favourites and Recently visited, one press away Rename, reorder and group Favourites into folders right on the TV.
-- **Tabs.** Up to six live tabs (more sleep and reload when you return). A pop-up you clicked opens in a new tab; Back on its first page closes it and returns you. Switch from ⋮ → Tabs or by holding Menu.
+- **Home screen.** Popular sites, your Favourites and Recently visited, one press away. Edit Popular, hide or reorder sections, and rename, reorder and group Favourites into folders right on the TV.
+- **Tabs.** Up to six live tabs (more sleep and reload when you return). A pop-up you clicked opens in a new tab; Back on its first page closes it and returns you. Switch from ⋮ → Tabs or by holding Menu. Background tabs are muted. Links opened from other apps arrive in a new tab of the one running mkTV.
 - **Smart address bar.** Choose Google, DuckDuckGo, Bing, Brave or Startpage. As you type, it suggests matching Favourites and History pages, plus search suggestions from your engine if you turn them on (off by default, never in private browsing).
 - **Voice search.** Press the mic in the toolbar and say a search or a website.
 - **History.** Every page you've opened, grouped by day, searchable and remote-friendly. Remove single pages or clear it all.
@@ -26,7 +26,9 @@ mkTV turns the D-pad into a fast way to use any website: the highlight jumps fro
 - **Blocking.** Ads and trackers (built-in list plus the StevenBlack hosts list; turn on OISD, HaGeZi, Peter Lowe's or StevenBlack variants, add any hosts or domain list by address, and allowlist domains that must never be blocked), invisible click-trap layers, pop-ups and redirects you didn't click. Each block shows a small notice with **Open anyway**. Pause blocking for one site from the shield.
 - **YouTube ad removal** using the same technique as uBlock Origin and Brave.
 - **Private browsing.** A separate session that is deleted when you close it. Tracking codes are stripped from links and Global Privacy Control is on.
-- **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video, volume and page scroll.
+- **Phone remote.** Scan a QR code and use your phone's browser as a remote: D-pad or touchpad, live typing, your Home tiles, a seek bar for the playing video, volume and page scroll. The QR code carries a 128-bit pairing code that stays valid until you press **New code**, which unpairs every phone. The **Devices** tab lists connected phones with **Disconnect**, the TV shows a notice when a new phone connects, and Settings has an on/off switch.
+- **Share Wi-Fi.** Show a QR code that guests scan to join your Wi-Fi.
+- **Settings** in a sidebar of sections: Navigation, Start screen, Search, Protection, Blocklists, Privacy, Phone remote, Browsing, Downloads, Updates.
 
 Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 
@@ -39,7 +41,7 @@ Full list with details and limits: [docs/FEATURES.md](docs/FEATURES.md).
 | | Hold ▼ / hold ▲ | Jump to the site's bottom / top bar |
 | | ▲ at the top | Go to the toolbar |
 | Page (pointer mode) | ▲▼◀▶ | Move the pointer; push an edge to scroll |
-| Any page | Menu | Open the ⋮ menu |
+| Any page | Menu / hold Menu | Open the ⋮ menu / the tab switcher |
 | | CH+ / CH− | Scroll up / down |
 | | Play/Pause, FF, REW, Next, Prev | Control the page's video |
 | Watch mode | ◀ ▶ | Seek 10 s |
@@ -133,7 +135,7 @@ adb install -r mkTV.apk
 | 📱 **Mobile data** | Turn off "Wi-Fi assist" / "Switch to mobile data" so the phone uses Wi-Fi. |
 | 🔒 **Router isolation** | Some routers block Wi-Fi devices from seeing each other ("AP / client isolation", common on guest networks). Turn it off, or use the main network. |
 | 🔐 **Chrome switches to https://** | mkTV refuses https instantly so Chrome falls back to http. If Chrome shows "This site doesn't support a secure connection", tap **Continue to site**. Still stuck: Chrome **Settings → Privacy and security → Always use secure connections** → off, or "public sites only". |
-| 🔁 **Old link** | The code changes every time mkTV restarts. Scan the QR that's on the TV now; don't reopen an old address from the phone's history. The address starts with `http://`, not `https://`. |
+| 🔁 **Old link** | The code stays the same until someone presses **New code** (or Disconnect on the Devices tab, which shuts out that phone until the next New code). If in doubt, scan the QR that's on the TV now. The address starts with `http://`, not `https://`. |
 
 ### Share Wi-Fi doesn't fill in the network name
 
@@ -155,10 +157,12 @@ You installed a self-built copy (debug key). Install the release APK once over i
 
 | | |
 |---|---|
-| ![Home screen](docs/screenshots/home.jpg) **Home screen**: Popular, Favourites and Recent tiles | ![Jump navigation](docs/screenshots/jump-navigation.jpg) **Jump navigation**: the highlight jumps between links and buttons |
+| ![Home screen](docs/screenshots/home.jpg) **Home screen**: mkTV logo, Popular and Favourites | ![Jump navigation](docs/screenshots/jump-navigation.jpg) **Jump navigation**: the highlight jumps between links and buttons |
+| ![Tabs](docs/screenshots/tabs.jpg) **Tabs**: switch or close from ⋮ → Tabs | ![Downloads](docs/screenshots/downloads.jpg) **Downloads**: open, remove or delete |
 | ![Watch mode](docs/screenshots/watch-mode.jpg) **Watch mode**: remote key hints over a playing video | ![Ad blocker](docs/screenshots/ad-blocker.jpg) **Ad blocker**: what was blocked on this site |
-| ![Phone remote pairing](docs/screenshots/phone-remote-qr.jpg) **Phone remote**: scan to pair | ![Private browsing](docs/screenshots/private-browsing.jpg) **Private browsing** |
-| ![Menu](docs/screenshots/menu.jpg) **⋮ menu** | ![Settings](docs/screenshots/settings.jpg) **Settings** |
+| ![Phone remote pairing](docs/screenshots/phone-remote-qr.jpg) **Phone remote**: scan to pair; Connect and Devices tabs | ![Page zoom](docs/screenshots/zoom.jpg) **Page zoom**: remembered per site |
+| ![Menu](docs/screenshots/menu.jpg) **⋮ menu**: Tabs, Zoom, Downloads and more | ![Settings](docs/screenshots/settings.jpg) **Settings**: a sidebar of sections |
+| ![Private browsing](docs/screenshots/private-browsing.jpg) **Private browsing** | |
 
 <p align="center"><img src="docs/screenshots/phone-remote-page.jpg" width="260" alt="Phone remote page"><br><b>The phone remote</b>, in any phone browser</p>
 

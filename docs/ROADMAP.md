@@ -4,9 +4,7 @@ Goal: one remote-first, privacy-first browsing experience on every TV. The Andro
 
 ## Phase 0: today (Android TV / Google TV)
 
-Shipped: jump and pointer navigation, auto-hiding bar, ⋮ menu, home screen with Popular / Favourites / Recently visited, YouTube TV interface, watch mode, auto-unmute, HLS/DASH detection with native player, ad/tracker/pop-up/redirect blocking with per-site pause, YouTube ad pruning, private browsing, tracking-parameter stripping, GPC, settings, search engine choice with address-bar suggestions (local always, engine suggestions opt-in), voice search, a searchable History page, in-app updates from GitHub releases. See [FEATURES.md](FEATURES.md).
-
-In progress: phone remote ([PHONE_REMOTE.md](PHONE_REMOTE.md)), first implementation in `RemoteServer.kt`.
+Shipped: jump and pointer navigation, auto-hiding bar, ⋮ menu, home screen with Popular / Favourites / Recently visited, YouTube TV interface, watch mode, auto-unmute, HLS/DASH detection with native player, ad/tracker/pop-up/redirect blocking with per-site pause, YouTube ad pruning, private browsing, tracking-parameter stripping, GPC, settings, search engine choice with address-bar suggestions (local always, engine suggestions opt-in), voice search, a searchable History page, in-app updates from GitHub releases, tabs (pop-ups and links from other apps open in a new tab), a downloads manager, Favourites folders, per-site page zoom, full screen that fills the TV, more blocklists with custom lists and an allowlist, Settings in a sidebar of sections, an editable Home screen, Share Wi-Fi, and the phone remote ([PHONE_REMOTE.md](PHONE_REMOTE.md): touchpad, live typing, Home tiles, now-playing controls, Connect | Devices tabs, New code, on/off switch). See [FEATURES.md](FEATURES.md).
 
 ## Phase 1: harden and release on Android TV, Google TV and Fire TV
 
@@ -19,7 +17,7 @@ In progress: phone remote ([PHONE_REMOTE.md](PHONE_REMOTE.md)), first implementa
 - [ ] **Backups:** set `allowBackup="false"` or add backup rules that exclude favourites, recents and icons.
 - [ ] **Privacy fixes:** clear `files/icons` in Clear browsing data; only fetch icons for sites the user has visited or saved; send `Sec-GPC: 1`; isolate or clear web storage in private mode on WebViews without `MULTI_PROFILE` (or warn in the private-mode text).
 - [ ] **Per-site pause:** make it also stop cosmetic filtering, the click-trap sweep and YouTube pruning, so pausing is a real escape hatch.
-- [ ] **Phone remote hardening:** stop the server and rotate the token when the session ends or the app goes to the background; 128-bit token with constant-time compare; local-address and `Host` checks; size and rate limits ([PHONE_REMOTE.md](PHONE_REMOTE.md#implementation-status)).
+- [ ] **Phone remote hardening:** done: 128-bit token with constant-time compare, server stops when the app goes to the background, New code unpairs all phones, per-device Disconnect, 64 KB body cap. Left: local-address and `Host` checks, rate limits ([PHONE_REMOTE.md](PHONE_REMOTE.md#implementation-status)).
 - [x] **Search engine:** choice of Google, DuckDuckGo, Bing, Brave, Startpage (Settings → Search).
 - [ ] **Updates vs stores:** builds published to Google Play or the Amazon Appstore must not self-update (store policy). Add a build flag that turns off the in-app update check for store builds.
 - [ ] **Leanback requirements:** banner (present), no touchscreen required (present), every screen usable by D-pad, a privacy policy URL (publish [PRIVACY.md](PRIVACY.md)).
@@ -34,15 +32,15 @@ In progress: phone remote ([PHONE_REMOTE.md](PHONE_REMOTE.md)), first implementa
 | Feature | Notes |
 |---|---|
 | Continue watching | Remember the last position of long videos per URL (normal mode only, stored locally) and offer a row on the home screen. Opt-out in Settings; never in private mode |
-| Page zoom | ◀ ▶ zoom levels in the ⋮ menu, remembered per site. WebView `textZoom` / `setInitialScale`, with jump-mode rect scaling already handled by `iw` |
-| Bookmarks | Favourites are the bookmarks today. Add renaming, reordering and folders (TV Bro #27, #36, #48). Sync stays out of scope: no accounts, no servers |
+| ~~Page zoom~~ | **Shipped:** ⋮ → Zoom, remembered per site, default in Settings. Original note: ◀ ▶ zoom levels in the ⋮ menu, remembered per site. WebView `textZoom` / `setInitialScale`, with jump-mode rect scaling already handled by `iw` |
+| ~~Bookmarks~~ | **Shipped:** Favourites folders with rename and reorder. Original note: Favourites are the bookmarks today. Add renaming, reordering and folders (TV Bro #27, #36, #48). Sync stays out of scope: no accounts, no servers |
 | Per-site settings | One panel per site: blocking on/off, desktop site, zoom, auto-unmute, navigation mode. Generalise `pausedSites` into a per-site settings map in `Prefs` |
 | Theater mode | A "lean back" layout for any page video: hide the toolbar, dim everything but the main `<video>`, scale it to fill the screen without using the Fullscreen API (useful where the site blocks fullscreen) |
-| Tabs (light) | A small number of background pages, mainly so allowed pop-ups don't replace the current page. Keep blocking by default; offer "Open in new tab" on the blocked pop-up snackbar. Risky: `webView` is swapped for private mode and used throughout `BrowserActivity`, so tabs need a small page-holder abstraction first |
-| Downloads | The most-requested missing feature in comparable TV browsers (TV Bro #10, its most-commented issue). Today a download does nothing. Add a `DownloadListener` → Android `DownloadManager`, a remote-friendly downloads list, and "open with" for APKs and media |
-| Fullscreen reliability | The top complaint against comparable browsers (TV Bro #135 "Full screen stopped working"). Watch mode and ▼ full screen exist; build a test page set of common players (embedded iframes, custom controls) and fix gaps |
-| Custom filter lists | Users ask for uBlock-style lists (TV Bro #37, #143). mkTV takes one hosts URL; allow several, and consider cosmetic rules |
-| Page zoom | See above. Also asked for as a "page resolution" setting (TV Bro #128) |
+| ~~Tabs (light)~~ | **Shipped:** ⋮ → Tabs; clicked pop-ups open in a new tab. Original note: A small number of background pages, mainly so allowed pop-ups don't replace the current page. Keep blocking by default; offer "Open in new tab" on the blocked pop-up snackbar. Risky: `webView` is swapped for private mode and used throughout `BrowserActivity`, so tabs need a small page-holder abstraction first |
+| ~~Downloads~~ | **Shipped:** ⋮ → Downloads with open, remove, delete and APK install. Original note: The most-requested missing feature in comparable TV browsers (TV Bro #10, its most-commented issue). Today a download does nothing. Add a `DownloadListener` → Android `DownloadManager`, a remote-friendly downloads list, and "open with" for APKs and media |
+| ~~Fullscreen reliability~~ | **Shipped:** where a site's player can't go full screen, mkTV fills the screen with the video itself. A test page set of common players is still worth building. Original note: The top complaint against comparable browsers (TV Bro #135 "Full screen stopped working"). Watch mode and ▼ full screen exist; build a test page set of common players (embedded iframes, custom controls) and fix gaps |
+| ~~Custom filter lists~~ | **Shipped:** OISD, HaGeZi, Peter Lowe's and StevenBlack variants, any hosts or domain list by address, and an allowlist (cosmetic rules not yet). Original note: Users ask for uBlock-style lists (TV Bro #37, #143). mkTV takes one hosts URL; allow several, and consider cosmetic rules |
+| ~~Page zoom~~ | Shipped (see above). Also asked for as a "page resolution" setting (TV Bro #128) |
 | Voice into web fields | Voice search fills the address bar and mkTV's own fields; extend it to the focused field inside a page |
 
 ### Research notes (November 2026)
@@ -66,7 +64,7 @@ SmartTube's top problem is YouTube breaking; its top requests are SponsorBlock (
 
 **Built from this round:** a searchable History page, search engine choice with suggestions, voice search, and in-app updates (for sideloaded installs; see the store checklist item above).
 
-**Next candidates:** reliable fullscreen, a downloads manager, a zoom setting, custom filter lists, better bookmarks (folders, ordering; Favourites serve as bookmarks today), and tabs or "open pop-up in new tab". Details are in the Phase 2 table.
+**Built since:** a downloads manager, per-site zoom, custom filter lists with an allowlist, Favourites folders, tabs with pop-ups opening in a new tab, and full screen that fills the TV. Still open from this list: continue watching, per-site settings, theater mode and voice into web fields (Phase 2 table).
 
 ## Phase 3: platform-agnostic core
 
